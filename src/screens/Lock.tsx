@@ -98,7 +98,7 @@ export const Lock = ({ onUnlock }: { onUnlock: () => void }) => {
           <button type="button" className="btn btn-block" style={{ background: '#fff', color: 'var(--danger)' }} onClick={() => { wipeAll(); setForgot(false); setPin(''); setFirst(null); setMsg('請設定新的 PIN 碼，之後到「資安備份」還原'); }}>
             清除資料並重設 PIN 碼
           </button>
-          <button type="button" className="btn btn-block" style={{ background: 'rgba(255,255,255,.16)', color: '#fff' }} onClick={() => setForgot(false)}>我想起來了，返回</button>
+          <button type="button" className="btn btn-block" style={{ background: 'rgba(255,255,255,.5)', color: 'var(--on-field)' }} onClick={() => setForgot(false)}>我想起來了，返回</button>
         </div>
       </div>
     );

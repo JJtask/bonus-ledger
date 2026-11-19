@@ -275,7 +275,7 @@ export const ContractDetail = ({ id }: { id: string }) => {
       <Header title={c.code} onBack={nav.back} right={<TopActions />} />
       <div className="page">
         <div className="hero" style={{ paddingTop: 6 }}>
-          <button type="button" className="btn btn-link" style={{ color: '#fff', fontSize: 20, fontWeight: 700, padding: 0 }} onClick={() => nav.push({ name: 'client', client: c.client })}>
+          <button type="button" className="btn btn-link" style={{ color: 'var(--on-field)', fontSize: 20, fontWeight: 700, padding: 0 }} onClick={() => nav.push({ name: 'client', client: c.client })}>
             {c.client}<Icon n="chev" size={18} />
           </button>
           <div className="hero-amt"><span className="cur">本金 NT$</span><span className="num" style={{ fontSize: 32 }}>{money(c.principal)}</span></div>

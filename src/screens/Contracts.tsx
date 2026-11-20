@@ -64,9 +64,14 @@ export const ContractList = () => {
             ))}
           </div>
         </div>
-        <button type="button" className="btn btn-pri btn-block" style={{ margin: '12px 16px 0', width: 'calc(100% - 32px)' }} onClick={() => nav.push({ name: 'new' })}>
-          <Icon n="plus" size={20} sw={2.2} />新增合約
-        </button>
+        <div className="grid-2" style={{ margin: '12px 16px 0' }}>
+          <button type="button" className="btn btn-pri" onClick={() => nav.push({ name: 'new' })}>
+            <Icon n="plus" size={20} sw={2.2} />新增合約
+          </button>
+          <button type="button" className="btn btn-out" onClick={() => nav.push({ name: 'settings' })}>
+            <Icon n="gear" size={20} />專案設定
+          </button>
+        </div>
         <ul className="list" style={{ margin: '12px 16px 0' }}>
           {rows.map(({ c, st }) => (
             <li key={c.id}>
@@ -136,7 +141,11 @@ export const NewContract = ({ presetClient }: { presetClient?: string }) => {
         <section className="card pad stack-14" aria-labelledby="f-h">
           <h2 id="f-h" className="section-title">合約資料</h2>
           <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
-            <legend className="label" style={{ padding: 0 }}>專案</legend>
+            <legend className="label" style={{ padding: 0, width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>專案</span>
+              <button type="button" className="btn btn-link" style={{ fontSize: 13 }} onClick={() => nav.push({ name: 'settings' })}>新增／修改專案</button>
+            </legend>
+            {projects.length === 0 && <p className="inset small">還沒有可用的專案，請先按右上「新增／修改專案」建立。</p>}
             <div className="stack-8">
               {projects.map((pj) => (
                 <button key={pj.id} type="button" className="choice" aria-pressed={projectId === pj.id} onClick={() => setProjectId(pj.id)} style={{ textAlign: 'left', padding: '10px 14px', minHeight: 0 }}>

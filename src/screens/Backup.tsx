@@ -133,7 +133,7 @@ export const Backup = () => {
 
         <section className="section">
           <ul className="list">
-            <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'settings' })}><Icon n="gear" /><span className="grow strong">系統設定</span><span className="xs muted">專案、贖回比例、PIN 碼</span><Icon n="chev" size={18} /></button></li>
+            <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'settings' })}><Icon n="gear" /><span className="grow strong">專案與系統設定</span><span className="xs muted">專案、贖回比例、PIN 碼</span><Icon n="chev" size={18} /></button></li>
             <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'audit' })}><Icon n="list" /><span className="grow strong">稽核紀錄</span><span className="xs muted">{ledger.audit.length} 筆，唯讀</span><Icon n="chev" size={18} /></button></li>
           </ul>
         </section>
@@ -165,12 +165,12 @@ export const SettingsPage = () => {
 
   return (
     <>
-      <Header title="系統設定" onBack={nav.back} />
+      <Header title="專案與系統設定" onBack={nav.back} />
       <div className="page">
         <section className="section">
           <div className="section-head">
             <h2 className="section-title">專案</h2>
-            <span className="xs muted">修改只影響之後新增的合約</span>
+            <span className="xs muted">點專案即可修改條件</span>
           </div>
           <ul className="list">
             {ordered.map((p) => (
@@ -304,7 +304,16 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
           <p className="hint">「開始時」在生效當月首週發（生效日在 8 日以後就排到隔月首週）；「到期後」在到期日的隔月首週發。</p>
         </div>
         <button type="button" className="btn btn-pri btn-block" disabled={!ok} onClick={() => save({ ...p, name: p.name.trim(), category, tiers: [...p.tiers].sort((a, b) => a.min - b.min) }, '專案已儲存')}>儲存專案</button>
-        {project && (project.archived ? (
+        {project && usedCount === 0 && (
+          <ConfirmInline block danger label="刪除這個專案" confirmLabel="確定刪除" onConfirm={() => {
+            commit(updateSettings(ledger, { ...ledger.settings, projects: ledger.settings.projects.filter((x) => x.id !== project.id) }, `刪除專案：${project.name}`));
+            toast('已刪除專案');
+            onClose();
+          }}>
+            <p className="small">這個專案還沒有任何合約，刪除後無法復原。</p>
+          </ConfirmInline>
+        )}
+        {project && usedCount > 0 && (project.archived ? (
           <button type="button" className="btn btn-out btn-block" onClick={() => save({ ...project, archived: false }, '已重新啟用')}>重新啟用</button>
         ) : (
           <ConfirmInline block danger label="停用這個專案" confirmLabel="確定停用" onConfirm={() => save({ ...project, archived: true }, '已停用')}>

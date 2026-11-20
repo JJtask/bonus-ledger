@@ -18,7 +18,7 @@ export const EventRow = ({
   if (overdue && !paid) tag = { t: `逾期・原訂 ${ymLabel(ev.ym)} 首週`, cls: 'tag-red' };
 
   const title = ev.track === 'bonus' ? salesName ?? '' : c.client;
-  const sub = ev.track === 'bonus' ? `${evLabel(ev)}・客戶 ${c.client}` : `${evLabel(ev)}・${c.plan.name} ${c.plan.pct}%/期`;
+  const sub = ev.track === 'bonus' ? `${evLabel(ev, c)}・客戶 ${c.client}` : evLabel(ev, c);
   const amtColor = ev.blocked || ev.kind === 'ret_unk' ? 'var(--warn)' : paid ? 'var(--ink-3)' : overdue ? 'var(--danger)' : 'var(--ink)';
 
   return (
@@ -28,6 +28,7 @@ export const EventRow = ({
           <div className="item-title">
             <span className="name">{title}</span>
             <span className="code">{c.code}</span>
+            <span className="tag tag-proj">{c.terms.projectName}</span>
           </div>
           <div className="item-sub">{showMonth ? `${ymLabel(ev.ym)}・` : ''}{sub}</div>
           {tag && <span className={`tag ${tag.cls}`} style={{ marginTop: 6 }}>{tag.t}</span>}

@@ -1,18 +1,33 @@
 export type Intent = 'unk' | 'renew' | 'close';
 
-export interface Plan {
-  id: string;
-  name: string;
-  /** 每期幾個月（1、2、3、4、6、12） */
-  months: number;
-  /** 每期紅利 %（以本金計） */
-  pct: number;
-}
+/** 生效日規則：隔月 1 日／最近一個週三（週三入金當天生效） */
+export type EffRule = 'nextMonth1' | 'wednesday';
+
+/** 業務獎金發放方式：開始一半到期一半／全部在開始時／全部在到期後 */
+export type BonusSchedule = 'split' | 'start' | 'end';
 
 export interface Tier {
   /** 本金達此金額（含）以上適用 */
   min: number;
   pct: number;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  /** 類別，例如「新事業」「私募」，用來合計資金需求 */
+  category: string;
+  effRule: EffRule;
+  /** 合約期間（月） */
+  termMonths: number;
+  /** 每期幾個月 */
+  periodMonths: number;
+  /** 每期紅利 %（以本金計） */
+  pct: number;
+  tiers: Tier[];
+  bonusSchedule: BonusSchedule;
+  /** 停用後不能再新增合約，但舊合約照常運作 */
+  archived?: boolean;
 }
 
 export interface SalesPerson {
@@ -24,17 +39,25 @@ export interface SalesPerson {
 }
 
 export interface Redemption {
-  /** 客戶提出贖回日 YYYY-MM-DD */
   date: string;
-  /** 於哪個月首週發放（月序號） */
   payYM: number;
   refund: number;
   heldMonths: number;
   proRataDiv: number;
-  /** 已發頭款應追回金額 */
   clawback: number;
-  /** 作廢的尾款金額 */
   voidedTail: number;
+}
+
+/** 合約建立當下的專案條件快照；之後修改專案不影響舊合約 */
+export interface ContractTerms {
+  projectId: string;
+  projectName: string;
+  category: string;
+  effRule: EffRule;
+  termMonths: number;
+  periodMonths: number;
+  pct: number;
+  bonusSchedule: BonusSchedule;
 }
 
 export interface Contract {
@@ -44,9 +67,11 @@ export interface Contract {
   salesId: string;
   principal: number;
   depositDate: string;
+  /** 生效日 YYYY-MM-DD */
+  effDate: string;
   /** 生效月序號 = 年*12 + (月-1) */
   effYM: number;
-  plan: { name: string; months: number; pct: number };
+  terms: ContractTerms;
   bonusPct: number;
   intent: Intent;
   renewedFrom?: string;
@@ -60,7 +85,6 @@ export interface Payment {
   paidOn: string;
   amount: number;
   tail5?: string;
-  /** 獎金類款項發放當下所屬業務（離職移轉後仍保留） */
   salesId?: string;
   at: string;
 }
@@ -72,14 +96,13 @@ export interface AuditEntry {
 }
 
 export interface Settings {
-  plans: Plan[];
-  tiers: Tier[];
+  projects: Project[];
   /** 提前贖回退回本金 % */
   refundPct: number;
 }
 
 export interface Ledger {
-  v: 1;
+  v: 2;
   contracts: Contract[];
   sales: SalesPerson[];
   payments: Record<string, Payment>;
@@ -96,15 +119,16 @@ export interface Ev {
   ym: number;
   amount: number;
   track: 'client' | 'bonus';
-  /** 第幾期（紅利） */
   period?: number;
   periods?: number;
   final?: boolean;
   salesId: string;
   client: string;
   code: string;
-  /** 預估款項（續存後才會建立的新約頭款），不可核銷 */
+  projectId: string;
+  category: string;
   projected?: boolean;
-  /** 尚未確認續存意願，不可核銷 */
   blocked?: boolean;
 }
+
+export type Scope = { kind: 'all' } | { kind: 'cat'; v: string } | { kind: 'proj'; id: string };

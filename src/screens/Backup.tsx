@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
-import { updateSettings } from '../engine/actions';
-import { VALID_PERIOD_MONTHS, money } from '../engine/engine';
-import type { Ledger, Plan, Settings as S, Tier } from '../engine/types';
+import { describeProject, updateSettings } from '../engine/actions';
+import { BONUS_SCHEDULE_LABEL, TERM_OPTIONS, periodOptions, projectSummary, wan } from '../engine/engine';
+import type { BonusSchedule, EffRule, Ledger, Project, Tier } from '../engine/types';
 import { makeBackupFile, shareOrDownload } from '../lib/backup';
 import { BackupError, cryptoReady, decryptBackup, hashPin, verifyPin } from '../lib/crypto';
-import { isLedger, useStore } from '../lib/store';
-import { ConfirmInline, Header, Icon, MoneyInput, NumInput, useToast } from '../ui/kit';
+import { toLedger, useStore } from '../lib/store';
+import { ConfirmInline, Header, Icon, MoneyInput, NumInput, Seg, Sheet, useToast } from '../ui/kit';
 import { useNav } from '../ui/nav';
 import { TopActions } from '../ui/TopActions';
 
@@ -57,8 +57,9 @@ export const Backup = () => {
     setRerr(null);
     try {
       const data = (await decryptBackup(await file.text(), rpw)) as { ledger?: unknown };
-      if (!isLedger(data?.ledger)) throw new BackupError('format');
-      setRestored(data.ledger);
+      const l = toLedger(data?.ledger);
+      if (!l) throw new BackupError('format');
+      setRestored(l);
     } catch (e) {
       setRerr(e instanceof BackupError && e.reason === 'password' ? '密碼錯誤，或檔案內容被改過，無法還原。' : '這不是本系統的備份檔。');
     }
@@ -132,7 +133,7 @@ export const Backup = () => {
 
         <section className="section">
           <ul className="list">
-            <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'settings' })}><Icon n="gear" /><span className="grow strong">系統設定</span><span className="xs muted">紅利方案、獎金級距、PIN 碼</span><Icon n="chev" size={18} /></button></li>
+            <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'settings' })}><Icon n="gear" /><span className="grow strong">系統設定</span><span className="xs muted">專案、贖回比例、PIN 碼</span><Icon n="chev" size={18} /></button></li>
             <li><button type="button" className="item" style={{ alignItems: 'center' }} onClick={() => nav.push({ name: 'audit' })}><Icon n="list" /><span className="grow strong">稽核紀錄</span><span className="xs muted">{ledger.audit.length} 筆，唯讀</span><Icon n="chev" size={18} /></button></li>
           </ul>
         </section>
@@ -153,74 +154,54 @@ export const SettingsPage = () => {
   const { ledger, commit, meta, setMeta } = useStore();
   const nav = useNav();
   const toast = useToast();
-  const [s, setS] = useState<S>(() => JSON.parse(JSON.stringify(ledger.settings)));
-  const changed = JSON.stringify(s) !== JSON.stringify(ledger.settings);
-  const plansOk = s.plans.length > 0 && s.plans.every((p) => p.name.trim() && p.pct > 0 && VALID_PERIOD_MONTHS.includes(p.months));
-  const setPlan = (i: number, patch: Partial<Plan>) => setS({ ...s, plans: s.plans.map((p, j) => (j === i ? { ...p, ...patch } : p)) });
-  const setTier = (i: number, patch: Partial<Tier>) => setS({ ...s, tiers: s.tiers.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
-
+  const [edit, setEdit] = useState<Project | 'new' | null>(null);
+  const [refund, setRefund] = useState(ledger.settings.refundPct);
   const [oldPin, setOldPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [pinMsg, setPinMsg] = useState<string | null>(null);
+  const used = (id: string) => ledger.contracts.filter((c) => c.terms.projectId === id).length;
+  const cats = [...new Set(ledger.settings.projects.map((p) => p.category))];
+  const ordered = [...ledger.settings.projects].sort((x, y) => Number(!!x.archived) - Number(!!y.archived) || cats.indexOf(x.category) - cats.indexOf(y.category));
 
   return (
     <>
       <Header title="系統設定" onBack={nav.back} />
       <div className="page">
-        <section className="section card pad stack-12">
-          <h2 className="section-title">紅利方案</h2>
-          <p className="xs muted">修改方案只影響之後新增的合約，已登錄的合約維持原條件。</p>
-          {s.plans.map((p, i) => (
-            <div key={p.id} className="inset stack-8">
-              <div className="row-flex">
-                <label className="sr" htmlFor={`pn-${i}`} style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }}>方案名稱</label>
-                <input id={`pn-${i}`} className="fld grow" value={p.name} onChange={(e) => setPlan(i, { name: e.target.value })} />
-                <NumInput id={`pp-${i}`} value={p.pct} onChange={(v) => setPlan(i, { pct: v })} />
-                <span className="small">%</span>
-                <button type="button" className="sheet-close" aria-label={`刪除 ${p.name}`} disabled={s.plans.length <= 1} onClick={() => setS({ ...s, plans: s.plans.filter((_, j) => j !== i) })}><Icon n="trash" size={20} /></button>
-              </div>
-              <div className="chips">
-                {VALID_PERIOD_MONTHS.map((m) => (
-                  <button key={m} type="button" className="chip" aria-pressed={p.months === m} onClick={() => setPlan(i, { months: m })}>每 {m} 個月</button>
-                ))}
-              </div>
-            </div>
-          ))}
-          <button type="button" className="btn btn-quiet" onClick={() => setS({ ...s, plans: [...s.plans, { id: 'p-' + Date.now().toString(36), name: '新方案', months: 3, pct: 3 }] })}><Icon n="plus" size={18} />新增方案</button>
-        </section>
-
-        <section className="section card pad stack-12">
-          <h2 className="section-title">業務獎金級距</h2>
-          <p className="xs muted">本金達到金額（含）以上，套用該比例。登錄合約時自動帶入，可個別修改。</p>
-          {[...s.tiers].map((t, i) => (
-            <div key={i} className="row-flex">
-              <span className="small" style={{ width: 28 }}>滿</span>
-              <div className="grow"><MoneyInput id={`tm-${i}`} value={t.min} onChange={(v) => setTier(i, { min: v ?? 0 })} /></div>
-              <NumInput id={`tp-${i}`} value={t.pct} onChange={(v) => setTier(i, { pct: v })} />
-              <span className="small">%</span>
-              <button type="button" className="sheet-close" aria-label="刪除這個級距" disabled={s.tiers.length <= 1} onClick={() => setS({ ...s, tiers: s.tiers.filter((_, j) => j !== i) })}><Icon n="trash" size={20} /></button>
-            </div>
-          ))}
-          <button type="button" className="btn btn-quiet" onClick={() => setS({ ...s, tiers: [...s.tiers, { min: (Math.max(...s.tiers.map((t) => t.min)) || 0) + 1000000, pct: 3 }] })}><Icon n="plus" size={18} />新增級距</button>
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">專案</h2>
+            <span className="xs muted">修改只影響之後新增的合約</span>
+          </div>
+          <ul className="list">
+            {ordered.map((p) => (
+              <li key={p.id}>
+                <button type="button" className="item" onClick={() => setEdit(p)} style={{ alignItems: 'center', opacity: p.archived ? 0.6 : 1 }}>
+                  <div className="grow">
+                    <div className="item-title"><span className="name">{p.name}</span><span className="tag tag-proj">{p.category}</span>{p.archived && <span className="tag tag-gray">已停用</span>}</div>
+                    <div className="item-sub">{projectSummary(p)}</div>
+                    <div className="item-sub">業務獎金 {p.tiers.length === 1 ? `${p.tiers[0].pct}%` : p.tiers.map((t) => `${wan(t.min)}↑${t.pct}%`).join('、')}・{BONUS_SCHEDULE_LABEL[p.bonusSchedule]}</div>
+                  </div>
+                  <span className="xs muted">{used(p.id)} 張</span>
+                  <Icon n="chev" size={18} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="btn btn-out btn-block" style={{ marginTop: 12 }} onClick={() => setEdit('new')}><Icon n="plus" size={18} />新增專案</button>
         </section>
 
         <section className="section card pad stack-12">
           <h2 className="section-title">提前贖回</h2>
           <div className="row-flex">
-            <label className="grow small" htmlFor="rp">退回本金比例</label>
-            <NumInput id="rp" value={s.refundPct} onChange={(v) => setS({ ...s, refundPct: Math.min(100, v) })} />
+            <label className="grow small" htmlFor="rp">退回本金比例（全部專案）</label>
+            <NumInput id="rp" value={refund} onChange={(v) => setRefund(Math.min(100, v))} />
             <span className="small">%</span>
           </div>
+          <button type="button" className="btn btn-pri btn-block" disabled={refund === ledger.settings.refundPct || refund <= 0} onClick={() => {
+            commit(updateSettings(ledger, { ...ledger.settings, refundPct: refund }, `提前贖回退本比例 ${ledger.settings.refundPct}% → ${refund}%`));
+            toast('已儲存');
+          }}>儲存</button>
         </section>
-
-        <div style={{ margin: '16px 16px 0' }}>
-          <button type="button" className="btn btn-pri btn-block" disabled={!changed || !plansOk} onClick={() => {
-            const detail = `方案：${s.plans.map((p) => `${p.name} ${p.months}月${p.pct}%`).join('、')}；級距：${[...s.tiers].sort((a, b) => a.min - b.min).map((t) => `${money(t.min)}↑${t.pct}%`).join('、')}；贖回退本 ${s.refundPct}%`;
-            commit(updateSettings(ledger, { ...s, tiers: [...s.tiers].sort((a, b) => a.min - b.min) }, detail));
-            toast('設定已儲存');
-          }}>儲存設定</button>
-          {!plansOk && <p className="err">每個方案都要有名稱和大於 0 的比例。</p>}
-        </div>
 
         <section className="section card pad stack-12">
           <h2 className="section-title">更改 PIN 碼</h2>
@@ -237,7 +218,101 @@ export const SettingsPage = () => {
           {pinMsg && <p className="err">{pinMsg}</p>}
         </section>
       </div>
+      {edit && <ProjectSheet project={edit === 'new' ? null : edit} cats={cats} usedCount={edit === 'new' ? 0 : used(edit.id)} onClose={() => setEdit(null)} />}
     </>
+  );
+};
+
+const blankProject = (cat: string): Project => ({
+  id: 'pj-' + Date.now().toString(36), name: '', category: cat, effRule: 'nextMonth1', termMonths: 12, periodMonths: 3, pct: 2,
+  tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split'
+});
+
+const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project | null; cats: string[]; usedCount: number; onClose: () => void }) => {
+  const { ledger, commit } = useStore();
+  const toast = useToast();
+  const [p, setP] = useState<Project>(() => (project ? JSON.parse(JSON.stringify(project)) : blankProject(cats[0] ?? '新事業')));
+  const [otherCat, setOtherCat] = useState(cats.includes(p.category) ? '' : p.category);
+  const set = (patch: Partial<Project>) => setP((x) => ({ ...x, ...patch }));
+  const setTier = (i: number, patch: Partial<Tier>) => set({ tiers: p.tiers.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
+  const category = (otherCat.trim() || p.category).trim();
+  const dupName = ledger.settings.projects.some((x) => x.id !== p.id && x.name === p.name.trim());
+  const ok = p.name.trim() && !dupName && category && p.pct > 0 && periodOptions(p.termMonths).includes(p.periodMonths) && p.tiers.length > 0;
+  const save = (next: Project, msg: string) => {
+    const exists = ledger.settings.projects.some((x) => x.id === next.id);
+    const projects = exists ? ledger.settings.projects.map((x) => (x.id === next.id ? next : x)) : [...ledger.settings.projects, next];
+    commit(updateSettings(ledger, { ...ledger.settings, projects }, `${exists ? '修改' : '新增'}專案：${describeProject(next)}`));
+    toast(msg);
+    onClose();
+  };
+  return (
+    <Sheet title={project ? `編輯專案：${project.name}` : '新增專案'} onClose={onClose}>
+      <div className="stack-14">
+        {usedCount > 0 && <p className="inset small">已有 {usedCount} 張合約使用這個專案。修改後只套用在之後新增或續約的合約，舊合約條件不變。</p>}
+        <div><label className="label" htmlFor="pj-name">專案名稱</label><input id="pj-name" className="fld" value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="例：私募 1 年" aria-invalid={dupName || undefined} />{dupName && <p className="err">已經有同名的專案。</p>}</div>
+        <div>
+          <span className="label">類別（用來合計資金）</span>
+          <div className="chips" style={{ flexWrap: 'wrap' }}>
+            {cats.map((c) => <button key={c} type="button" className="chip" aria-pressed={!otherCat && p.category === c} onClick={() => { set({ category: c }); setOtherCat(''); }}>{c}</button>)}
+          </div>
+          <input className="fld" style={{ marginTop: 8 }} placeholder="或輸入新類別" value={otherCat} onChange={(e) => setOtherCat(e.target.value)} aria-label="新類別名稱" />
+        </div>
+        <div>
+          <span className="label">生效日</span>
+          <Seg<EffRule> label="生效日規則" value={p.effRule} onChange={(v) => set({ effRule: v })} options={[{ v: 'nextMonth1', t: '入金隔月 1 日' }, { v: 'wednesday', t: '最近一個週三' }]} />
+          {p.effRule === 'wednesday' && <p className="hint">週三入金當天生效，其他日子取下一個週三。</p>}
+        </div>
+        <div>
+          <span className="label">合約期間</span>
+          <div className="chips" style={{ flexWrap: 'wrap' }}>
+            {TERM_OPTIONS.map((m) => <button key={m} type="button" className="chip" aria-pressed={p.termMonths === m} onClick={() => set({ termMonths: m, periodMonths: periodOptions(m).includes(p.periodMonths) ? p.periodMonths : 1 })}>{m} 個月</button>)}
+          </div>
+        </div>
+        <div>
+          <span className="label">紅利：每期幾個月</span>
+          <div className="chips" style={{ flexWrap: 'wrap' }}>
+            {periodOptions(p.termMonths).map((m) => <button key={m} type="button" className="chip" aria-pressed={p.periodMonths === m} onClick={() => set({ periodMonths: m })}>{m === 1 ? '月配' : m === 3 ? '季配' : m === 6 ? '半年配' : m === 12 ? '年配' : `每 ${m} 個月`}</button>)}
+          </div>
+        </div>
+        <div className="row-flex">
+          <label className="grow small" htmlFor="pj-pct">每期紅利（佔本金）</label>
+          <NumInput id="pj-pct" value={p.pct} onChange={(v) => set({ pct: v })} />
+          <span className="small">%</span>
+        </div>
+        <div className="stack-8">
+          <span className="label" style={{ marginBottom: 0 }}>業務獎金比例（依本金級距）</span>
+          {p.tiers.map((t, i) => (
+            <div key={i} className="row-flex">
+              <span className="small" style={{ width: 24 }}>滿</span>
+              <div className="grow"><MoneyInput id={`pj-tm-${i}`} value={t.min} onChange={(v) => setTier(i, { min: v ?? 0 })} /></div>
+              <NumInput id={`pj-tp-${i}`} value={t.pct} onChange={(v) => setTier(i, { pct: v })} />
+              <span className="small">%</span>
+              <button type="button" className="sheet-close" aria-label="刪除這個級距" disabled={p.tiers.length <= 1} onClick={() => set({ tiers: p.tiers.filter((_, j) => j !== i) })}><Icon n="trash" size={20} /></button>
+            </div>
+          ))}
+          <button type="button" className="btn btn-quiet" onClick={() => set({ tiers: [...p.tiers, { min: (Math.max(...p.tiers.map((t) => t.min)) || 0) + 1000000, pct: p.tiers[p.tiers.length - 1]?.pct ?? 2 }] })}><Icon n="plus" size={18} />新增級距</button>
+        </div>
+        <div>
+          <span className="label">業務獎金發放時間</span>
+          <div className="stack-8">
+            {(['split', 'start', 'end'] as BonusSchedule[]).map((v) => (
+              <button key={v} type="button" className="choice" aria-pressed={p.bonusSchedule === v} onClick={() => set({ bonusSchedule: v })} style={{ minHeight: 0, padding: '10px 14px', textAlign: 'left' }}>
+                <span className="t" style={{ fontSize: 14 }}>{BONUS_SCHEDULE_LABEL[v]}</span>
+              </button>
+            ))}
+          </div>
+          <p className="hint">「開始時」在生效當月首週發（生效日在 8 日以後就排到隔月首週）；「到期後」在到期日的隔月首週發。</p>
+        </div>
+        <button type="button" className="btn btn-pri btn-block" disabled={!ok} onClick={() => save({ ...p, name: p.name.trim(), category, tiers: [...p.tiers].sort((a, b) => a.min - b.min) }, '專案已儲存')}>儲存專案</button>
+        {project && (project.archived ? (
+          <button type="button" className="btn btn-out btn-block" onClick={() => save({ ...project, archived: false }, '已重新啟用')}>重新啟用</button>
+        ) : (
+          <ConfirmInline block danger label="停用這個專案" confirmLabel="確定停用" onConfirm={() => save({ ...project, archived: true }, '已停用')}>
+            <p className="small">停用後新增合約時不能再選這個專案；已經登錄的 {usedCount} 張合約照常運作、照常發放。</p>
+          </ConfirmInline>
+        ))}
+      </div>
+    </Sheet>
   );
 };
 

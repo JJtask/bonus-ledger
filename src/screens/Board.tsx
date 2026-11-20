@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { board, boardYM, daysUntil, firstWeekLabel, money, ymMonth, ymOf } from '../engine/engine';
+import { board, boardYM, daysUntil, firstWeekLabel, money, monthByScope, scopeLabel, ymMonth, ymOf } from '../engine/engine';
 import type { Ev } from '../engine/types';
 import { demoLedger } from '../lib/demo';
 import { useStore } from '../lib/store';
@@ -8,6 +8,7 @@ import { EventSheet } from '../ui/EventSheet';
 import { Icon, Seg, useToast } from '../ui/kit';
 import { useNav } from '../ui/nav';
 import { TopActions } from '../ui/TopActions';
+import { ScopeChips, useScope } from '../ui/scope';
 
 const ORDER: Record<string, number> = { ret_unk: 0, div: 1, ret: 2, rret: 3, rdiv: 4, tail: 5, head: 6, head_proj: 7 };
 
@@ -18,7 +19,9 @@ export const Board = () => {
   const [list, setList] = useState<'c' | 'b'>('c');
   const [open, setOpen] = useState<Ev | null>(null);
   const [fresh, setFresh] = useState<string | null>(null);
-  const b = useMemo(() => board(ledger, today), [ledger, today]);
+  const [scope, setScope] = useScope(ledger);
+  const b = useMemo(() => board(ledger, today, scope), [ledger, today, scope]);
+  const byScope = useMemo(() => monthByScope(ledger, boardYM(today)), [ledger, today]);
   const ym = boardYM(today);
   const inWeek = ym === ymOf(today);
   const day = Number(today.slice(8, 10));
@@ -61,7 +64,8 @@ export const Board = () => {
       </div>
       <div className="page">
         <div className="hero">
-          <p className="hero-label">{ymMonth(ym)} 月首週應備總額（最保守）</p>
+          <ScopeChips ledger={ledger} scope={scope} onChange={setScope} />
+          <p className="hero-label">{scope.kind === 'all' ? '' : `${scopeLabel(ledger, scope)}・`}{ymMonth(ym)} 月首週應備總額（最保守）</p>
           <div className="hero-amt"><span className="cur">NT$</span><span className="num">{money(b.total)}</span></div>
           <p className="hero-note">
             {firstWeekLabel(ym)}・{inWeek ? `首週進行中，剩 ${8 - day} 天` : `還有 ${daysUntil(today, ym)} 天開始`}
@@ -103,6 +107,27 @@ export const Board = () => {
             </div>
           </div>
         </section>
+
+        {scope.kind === 'all' && byScope.length > 2 && !empty && (
+          <section className="section" aria-labelledby="bs-h">
+            <div className="section-head">
+              <h2 id="bs-h" className="section-title">依專案的資金需求</h2>
+              <span className="xs muted">點一列只看該範圍</span>
+            </div>
+            <ul className="list">
+              {byScope.map((r) => (
+                <li key={JSON.stringify(r.scope)}>
+                  <button type="button" className={`scope-row ${r.level}`} onClick={() => setScope(r.scope)}>
+                    <span className="nm" style={{ fontWeight: r.level === 'cat' ? 700 : 500 }}>{r.label}</span>
+                    <span className="strong right">{money(r.totals.total)}</span>
+                    <span className="nm xs muted">紅利 {money(r.totals.div)}・獎金 {money(r.totals.head + r.totals.tail)}</span>
+                    <span className="xs right" style={{ color: r.totals.retSure + r.totals.retUnk ? (r.totals.retUnk ? 'var(--warn)' : 'var(--ink-3)') : 'var(--ink-3)' }}>退本 {money(r.totals.retSure + r.totals.retUnk)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {empty && (
           <section className="section card empty">

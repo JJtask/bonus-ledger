@@ -1,16 +1,18 @@
 import { useMemo, useState } from 'react';
-import { extraDividend, forecast, money, ymInput, ymLabel, ymOf } from '../engine/engine';
+import { extraDividend, forecast, money, scopeLabel, ymInput, ymLabel, ymOf } from '../engine/engine';
 import { copyText } from '../lib/backup';
 import { useStore } from '../lib/store';
 import { MoneyInput, useToast } from '../ui/kit';
 import { useNav } from '../ui/nav';
 import { TopActions } from '../ui/TopActions';
+import { ScopeChips, useScope } from '../ui/scope';
 
 export const Forecast = () => {
   const { ledger, today } = useStore();
   const nav = useNav();
   const toast = useToast();
-  const months = useMemo(() => forecast(ledger, today), [ledger, today]);
+  const [scope, setScope] = useScope(ledger);
+  const months = useMemo(() => forecast(ledger, today, scope), [ledger, today, scope]);
   const [open, setOpen] = useState<number | null>(null);
   const total = months.reduce((t, m) => t + m.total, 0);
   const unk = months.reduce((t, m) => t + m.retUnk, 0);
@@ -26,10 +28,10 @@ export const Forecast = () => {
   const toYM = ymOf(to + '-01');
   const rangeBad = !from || !to || fromYM > toYM;
   const result = useMemo(
-    () => (shown && pool && !rangeBad ? extraDividend(ledger, today, pool, fromYM, toYM) : []),
-    [shown, pool, rangeBad, ledger, today, fromYM, toYM]
+    () => (shown && pool && !rangeBad ? extraDividend(ledger, today, pool, fromYM, toYM, scope) : []),
+    [shown, pool, rangeBad, ledger, today, fromYM, toYM, scope]
   );
-  const text = `【額外分紅】${ymLabel(fromYM)} 至 ${ymLabel(toYM)}，總池 ${money(pool ?? 0)} 元\n` +
+  const text = `【額外分紅${scope.kind === 'all' ? '' : `・${scopeLabel(ledger, scope)}`}】${ymLabel(fromYM)} 至 ${ymLabel(toYM)}，總池 ${money(pool ?? 0)} 元\n` +
     result.map((r, i) => `${i + 1}. ${r.client} ${r.code}：${money(r.amount)} 元`).join('\n');
   const pct = (v: number) => `${(v / max) * 100}%`;
 
@@ -38,7 +40,8 @@ export const Forecast = () => {
       <div className="hdr"><div className="hdr-bar"><h1 className="hdr-title">12 月水位</h1><TopActions /></div></div>
       <div className="page">
         <div className="hero">
-          <p className="hero-label">未來 12 個月首週合計應備（最保守）</p>
+          <ScopeChips ledger={ledger} scope={scope} onChange={(v) => { setScope(v); setShown(false); }} />
+          <p className="hero-label">{scope.kind === 'all' ? '' : `${scopeLabel(ledger, scope)}・`}未來 12 個月首週合計應備（最保守）</p>
           <div className="hero-amt"><span className="cur">NT$</span><span className="num">{money(total)}</span></div>
           <p className="hero-note">{ymLabel(months[0].ym)} 至 {ymLabel(months[11].ym)}・含未確認退本 {money(unk)}</p>
         </div>
@@ -126,7 +129,7 @@ export const Forecast = () => {
 
         <section className="section card pad" aria-labelledby="bonus-h">
           <h2 id="bonus-h" className="section-title">額外分紅試算</h2>
-          <p className="small muted" style={{ margin: '4px 0 14px', lineHeight: 1.5 }}>只分給今天仍在運作中的合約，依「本金 × 期間內計息月數」的比例分配。</p>
+          <p className="small muted" style={{ margin: '4px 0 14px', lineHeight: 1.5 }}>只分給今天仍在運作中的合約，依「本金 × 期間內計息月數」的比例分配。範圍：<b>{scopeLabel(ledger, scope)}</b>（可在上方切換專案）。</p>
           <div className="stack-12">
             <div>
               <label className="label" htmlFor="pool">分紅總池（元）</label>

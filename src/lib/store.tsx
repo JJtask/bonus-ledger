@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { defaultSettings, todayStr } from '../engine/engine';
-import { emptyLedger } from '../engine/actions';
+import { emptyLedger, migrate } from '../engine/actions';
 import type { Ledger } from '../engine/types';
 import type { PinRecord } from './crypto';
 
@@ -26,10 +26,8 @@ const read = <T,>(key: string, fallback: T): T => {
   }
 };
 
-export const isLedger = (x: unknown): x is Ledger => {
-  const l = x as Ledger;
-  return !!l && l.v === 1 && Array.isArray(l.contracts) && Array.isArray(l.sales) && typeof l.payments === 'object' && !!l.settings && Array.isArray(l.audit);
-};
+/** 讀取帳本：舊版資料自動升級成專案制 */
+export const toLedger = (x: unknown): Ledger | null => migrate(x);
 
 /** 網址加 ?today=2026-12-03 可模擬日期（測試用） */
 const resolveToday = () => {
@@ -53,8 +51,12 @@ const Ctx = createContext<Store | null>(null);
 
 export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [ledger, setLedger] = useState<Ledger>(() => {
-    const l = read<Ledger | null>(LEDGER_KEY, null);
-    return isLedger(l) ? l : emptyLedger(defaultSettings());
+    const raw = read<{ v?: number } | null>(LEDGER_KEY, null);
+    const l = toLedger(raw);
+    if (l && raw?.v !== l.v) {
+      try { localStorage.setItem(LEDGER_KEY, JSON.stringify(l)); } catch { /* 存不進去時下次再升級 */ }
+    }
+    return l ?? emptyLedger(defaultSettings());
   });
   const [meta, setMetaState] = useState<Meta>(() => ({ fails: 0, lockUntil: 0, dirty: 0, ...read<Partial<Meta>>(META_KEY, {}) }));
   const [today, setToday] = useState(resolveToday);

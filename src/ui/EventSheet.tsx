@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { pay, setIntent, unpay } from '../engine/actions';
+import { pay, renewalEffDate, setIntent, unpay } from '../engine/actions';
 import { evLabel, fmtDate, money, payable, ymLabel } from '../engine/engine';
 import type { Ev } from '../engine/types';
 import { useStore } from '../lib/store';
@@ -17,9 +17,6 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
   const [paidOn, setPaidOn] = useState(today);
   const [tail5, setTail5] = useState('');
   const [renewP, setRenewP] = useState<number | null>(c.principal);
-  const [planId, setPlanId] = useState<string>(
-    ledger.settings.plans.find((p) => p.months === c.plan.months && p.pct === c.plan.pct)?.id ?? ledger.settings.plans[0]?.id
-  );
   const isRenewFinal = ev.kind === 'div' && ev.final && c.intent === 'renew' && !c.renewedTo;
   const canPay = payable(ev, ledger, today);
 
@@ -34,7 +31,7 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
             <span className="code">{c.code}</span>
           </div>
           <div className="item-sub">
-            {evLabel(ev)}・{ymLabel(ev.ym)} 首週{ev.track === 'bonus' ? `・業務 ${sales?.name ?? ''}` : ''}
+            {evLabel(ev, c)}・{ymLabel(ev.ym)} 首週・{c.terms.projectName}{ev.track === 'bonus' ? `・業務 ${sales?.name ?? ''}` : ''}
           </div>
         </div>
         <div className="item-amt" style={{ fontSize: 22 }}>{money(ev.amount)}</div>
@@ -117,20 +114,10 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
           </div>
           {isRenewFinal && (
             <div className="inset stack-12">
-              <p className="small">客戶已確認續存。核銷後會自動建立 <b>{ymLabel(c.effYM + 12)}/01</b> 生效的新約，本金鎖定後不能改。</p>
+              <p className="small">客戶已確認續存。核銷後會自動建立 <b>{fmtDate(renewalEffDate(c))}</b> 生效的新約，條件照「{c.terms.projectName}」專案目前的設定，本金鎖定後不能改。</p>
               <div>
                 <label className="label" htmlFor="renew-p">新約本金</label>
                 <MoneyInput id="renew-p" value={renewP} onChange={setRenewP} />
-              </div>
-              <div>
-                <span className="label">新約紅利方案</span>
-                <div className="chips" style={{ flexWrap: 'wrap' }}>
-                  {ledger.settings.plans.map((p) => (
-                    <button key={p.id} type="button" className="chip" aria-pressed={planId === p.id} onClick={() => setPlanId(p.id)}>
-                      {p.name} {p.pct}%/{p.months}月
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
           )}
@@ -139,7 +126,7 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
             className="btn btn-pri btn-block"
             disabled={isRenewFinal && !renewP}
             onClick={() => {
-              const r = pay(ledger, today, { eventId: ev.id, paidOn, tail5, renewPrincipal: renewP ?? undefined, renewPlanId: planId });
+              const r = pay(ledger, today, { eventId: ev.id, paidOn, tail5, renewPrincipal: renewP ?? undefined });
               commit(r.ledger);
               onPaid?.(ev.id);
               toast(r.renewed ? `已核銷，並建立新約 ${r.renewed.code}` : `已核銷 ${money(ev.amount)}`);

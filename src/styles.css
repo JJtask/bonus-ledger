@@ -268,3 +268,11 @@ button.item:active { background: var(--brand-wash); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+.tag-proj { background: var(--brand-tint); color: var(--brand-deep); font-weight: 600; }
+.scope-chips { padding: 0 16px 14px; margin: 0 -16px; padding-left: 16px; }
+.scope-chips .chip { background: rgba(255, 255, 255, 0.6); border-color: transparent; color: var(--on-field); }
+.scope-chips .chip[aria-pressed='true'] { background: var(--on-field); border-color: var(--on-field); color: #fff; }
+.scope-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 11px 16px; width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; color: inherit; }
+.scope-row:active { background: var(--brand-wash); }
+.scope-row.cat { background: var(--brand-wash); }
+.scope-row.proj .nm { padding-left: 12px; }

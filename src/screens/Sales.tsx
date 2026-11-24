@@ -35,7 +35,7 @@ export const Sales = () => {
       <div className="hdr"><div className="hdr-bar"><h1 className="hdr-title">業務對帳</h1><TopActions /></div></div>
       <div className="page">
         <p className="foot-note" style={{ marginTop: 14, textAlign: 'left' }}>
-          {ymMonth(ym)} 月首週發放前，按「對帳單」複製文字貼到業務的 LINE 核對。
+          {ymMonth(ym)} 月發放前，按「對帳單」複製文字貼到業務的 LINE 核對。
         </p>
         <ul className="list" style={{ margin: '12px 16px 0' }}>
           {active.map((s) => (
@@ -48,7 +48,7 @@ export const Sales = () => {
                   <div className="item-sub">經手中 {stats[s.id]?.n ?? 0} 張・本金 {money(stats[s.id]?.principal ?? 0)}</div>
                 </div>
                 <div className="right">
-                  <div className="xs muted">{ymMonth(ym)} 月首週應領</div>
+                  <div className="xs muted">{ymMonth(ym)} 月應領</div>
                   <div className="item-amt">{money(stats[s.id]?.bonus ?? 0)}</div>
                 </div>
               </div>

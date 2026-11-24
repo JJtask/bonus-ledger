@@ -14,7 +14,7 @@ import { LockCtx } from './ui/TopActions';
 const AUTO_LOCK_MS = 30000;
 
 const TABS: { id: Tab; t: string; icon: string }[] = [
-  { id: 'board', t: '首週看板', icon: 'home' },
+  { id: 'board', t: '資金看板', icon: 'home' },
   { id: 'forecast', t: '12月水位', icon: 'chart' },
   { id: 'sales', t: '業務對帳', icon: 'users' },
   { id: 'contracts', t: '合約管理', icon: 'file' },

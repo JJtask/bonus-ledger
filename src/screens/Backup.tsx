@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { describeProject, updateSettings } from '../engine/actions';
-import { BONUS_SCHEDULE_LABEL, TERM_OPTIONS, periodOptions, projectSummary, wan } from '../engine/engine';
-import type { BonusSchedule, EffRule, Ledger, Project, Tier } from '../engine/types';
+import { BONUS_SCHEDULE_LABEL, PAY_RULE_LABEL, TERM_OPTIONS, WEEKDAY_LABEL, effRuleText, effectiveDate, fmtDateW, periodOptions, projectSummary, wan } from '../engine/engine';
+import type { BonusSchedule, EffRule, Ledger, PayRule, Project, Tier } from '../engine/types';
 import { makeBackupFile, shareOrDownload } from '../lib/backup';
 import { BackupError, cryptoReady, decryptBackup, hashPin, verifyPin } from '../lib/crypto';
 import { toLedger, useStore } from '../lib/store';
@@ -224,7 +224,7 @@ export const SettingsPage = () => {
 };
 
 const blankProject = (cat: string): Project => ({
-  id: 'pj-' + Date.now().toString(36), name: '', category: cat, effRule: 'nextMonth1', termMonths: 12, periodMonths: 3, pct: 2,
+  id: 'pj-' + Date.now().toString(36), name: '', category: cat, effRule: 'tplus', effDays: 14, effDayUnit: 'calendar', payRule: 'anniversary', termMonths: 12, periodMonths: 3, pct: 2,
   tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split'
 });
 
@@ -259,8 +259,29 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
         </div>
         <div>
           <span className="label">生效日</span>
-          <Seg<EffRule> label="生效日規則" value={p.effRule} onChange={(v) => set({ effRule: v })} options={[{ v: 'nextMonth1', t: '入金隔月 1 日' }, { v: 'wednesday', t: '最近一個週三' }]} />
-          {p.effRule === 'wednesday' && <p className="hint">週三入金當天生效，其他日子取下一個週三。</p>}
+          <Seg<EffRule> label="生效日規則" value={p.effRule} onChange={(v) => set({ effRule: v, effWeekday: p.effWeekday ?? 3, effSameDay: p.effSameDay ?? true, effDays: p.effDays ?? 14, effDayUnit: p.effDayUnit ?? 'calendar' })}
+            options={[{ v: 'tplus', t: '入帳後 T+N' }, { v: 'weekday', t: '最近的星期幾' }, { v: 'nextMonth1', t: '隔月 1 日' }]} />
+          {p.effRule === 'tplus' && (
+            <div className="inset stack-8" style={{ marginTop: 8 }}>
+              <div className="row-flex">
+                <label className="grow small" htmlFor="pj-days">入帳後幾天生效</label>
+                <span className="small">T +</span>
+                <NumInput id="pj-days" value={p.effDays ?? 14} onChange={(v) => set({ effDays: Math.max(0, Math.round(v)) })} width={64} />
+              </div>
+              <Seg<'calendar' | 'business'> label="天數算法" value={p.effDayUnit ?? 'calendar'} onChange={(v) => set({ effDayUnit: v })}
+                options={[{ v: 'calendar', t: '日曆天' }, { v: 'business', t: '工作天' }]} />
+            </div>
+          )}
+          {p.effRule === 'weekday' && (
+            <div className="inset stack-8" style={{ marginTop: 8 }}>
+              <div className="chips" style={{ flexWrap: 'wrap' }}>
+                {[1, 2, 3, 4, 5].map((d) => <button key={d} type="button" className="chip" aria-pressed={(p.effWeekday ?? 3) === d} onClick={() => set({ effWeekday: d })}>{WEEKDAY_LABEL[d]}</button>)}
+              </div>
+              <Seg<'y' | 'n'> label="當天入帳" value={p.effSameDay === false ? 'n' : 'y'} onChange={(v) => set({ effSameDay: v === 'y' })}
+                options={[{ v: 'y', t: '當天入帳當天生效' }, { v: 'n', t: '當天入帳取下週' }]} />
+            </div>
+          )}
+          <p className="hint">{effRuleText(p)}。例：12/3（四）入帳 → {fmtDateW(effectiveDate('2026-12-03', p))} 生效</p>
         </div>
         <div>
           <span className="label">合約期間</span>
@@ -273,6 +294,24 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
           <div className="chips" style={{ flexWrap: 'wrap' }}>
             {periodOptions(p.termMonths).map((m) => <button key={m} type="button" className="chip" aria-pressed={p.periodMonths === m} onClick={() => set({ periodMonths: m })}>{m === 1 ? '月配' : m === 3 ? '季配' : m === 6 ? '半年配' : m === 12 ? '年配' : `每 ${m} 個月`}</button>)}
           </div>
+        </div>
+        <div>
+          <span className="label">紅利發放日</span>
+          <div className="stack-8">
+            {(['anniversary', 'firstWeek', 'fixedDay'] as PayRule[]).map((v) => (
+              <button key={v} type="button" className="choice" aria-pressed={p.payRule === v} onClick={() => set({ payRule: v, payDay: p.payDay ?? 10 })} style={{ minHeight: 0, padding: '10px 14px', textAlign: 'left' }}>
+                <span className="t" style={{ fontSize: 14 }}>{PAY_RULE_LABEL[v]}</span>
+              </button>
+            ))}
+          </div>
+          {p.payRule === 'fixedDay' && (
+            <div className="row-flex" style={{ marginTop: 8 }}>
+              <label className="grow small" htmlFor="pj-payday">每月幾號發</label>
+              <NumInput id="pj-payday" value={p.payDay ?? 10} onChange={(v) => set({ payDay: Math.min(28, Math.max(1, Math.round(v))) })} width={64} />
+              <span className="small">日</span>
+            </div>
+          )}
+          <p className="hint">到期退本、最後一期紅利和到期獎金都在同一天發。{p.payRule === 'anniversary' ? '例：12/17 生效的季配，3/17、6/17、9/17、12/17 發。' : ''}</p>
         </div>
         <div className="row-flex">
           <label className="grow small" htmlFor="pj-pct">每期紅利（佔本金）</label>
@@ -301,7 +340,7 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
               </button>
             ))}
           </div>
-          <p className="hint">「開始時」在生效當月首週發（生效日在 8 日以後就排到隔月首週）；「到期後」在到期日的隔月首週發。</p>
+          <p className="hint">「開始時」在生效日發（首週制排在對應月份的 1～7 日）；「到期時」跟最後一期紅利同一天發。</p>
         </div>
         <button type="button" className="btn btn-pri btn-block" disabled={!ok} onClick={() => save({ ...p, name: p.name.trim(), category, tiers: [...p.tiers].sort((a, b) => a.min - b.min) }, '專案已儲存')}>儲存專案</button>
         {project && usedCount === 0 && (

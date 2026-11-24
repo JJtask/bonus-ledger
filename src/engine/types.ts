@@ -1,7 +1,26 @@
 export type Intent = 'unk' | 'renew' | 'close';
 
-/** 生效日規則：隔月 1 日／最近一個週三（週三入金當天生效） */
-export type EffRule = 'nextMonth1' | 'wednesday';
+/** 生效日規則：入帳隔月 1 日／入帳後最近的星期 X／入帳後 T+N 天 */
+export type EffRule = 'nextMonth1' | 'weekday' | 'tplus';
+
+/** 發放日規則：每期滿的同一天（遇週末順延）／期滿後隔月 1～7 日／期滿後每月固定某日 */
+export type PayRule = 'anniversary' | 'firstWeek' | 'fixedDay';
+
+/** 生效日與發放日的細部條件（專案與合約共用） */
+export interface DateRules {
+  effRule: EffRule;
+  /** weekday：0=週日 … 3=週三 */
+  effWeekday?: number;
+  /** weekday：入帳當天剛好是該星期幾時，當天生效 */
+  effSameDay?: boolean;
+  /** tplus：入帳後幾天 */
+  effDays?: number;
+  /** tplus：calendar=日曆天（遇週末順延）、business=工作天（只算週一到五） */
+  effDayUnit?: 'calendar' | 'business';
+  payRule: PayRule;
+  /** fixedDay：每月幾號 */
+  payDay?: number;
+}
 
 /** 業務獎金發放方式：開始一半到期一半／全部在開始時／全部在到期後 */
 export type BonusSchedule = 'split' | 'start' | 'end';
@@ -12,12 +31,11 @@ export interface Tier {
   pct: number;
 }
 
-export interface Project {
+export interface Project extends DateRules {
   id: string;
   name: string;
   /** 類別，例如「新事業」「私募」，用來合計資金需求 */
   category: string;
-  effRule: EffRule;
   /** 合約期間（月） */
   termMonths: number;
   /** 每期幾個月 */
@@ -40,7 +58,10 @@ export interface SalesPerson {
 
 export interface Redemption {
   date: string;
-  payYM: number;
+  /** 退本與補發紅利的發放日 */
+  payDate: string;
+  /** 舊資料欄位 */
+  payYM?: number;
   refund: number;
   heldMonths: number;
   proRataDiv: number;
@@ -49,11 +70,10 @@ export interface Redemption {
 }
 
 /** 合約建立當下的專案條件快照；之後修改專案不影響舊合約 */
-export interface ContractTerms {
+export interface ContractTerms extends DateRules {
   projectId: string;
   projectName: string;
   category: string;
-  effRule: EffRule;
   termMonths: number;
   periodMonths: number;
   pct: number;
@@ -116,6 +136,10 @@ export interface Ev {
   id: string;
   contractId: string;
   kind: EvKind;
+  /** 應發放日；首週制為該月 1 日 */
+  due: string;
+  /** 首週制：可在 1～7 日之間發放 */
+  week?: boolean;
   ym: number;
   amount: number;
   track: 'client' | 'bonus';

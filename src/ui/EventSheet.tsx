@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { pay, renewalEffDate, setIntent, unpay } from '../engine/actions';
-import { evLabel, fmtDate, money, payable, ymLabel } from '../engine/engine';
+import { evLabel, fmtDate, money, payable, dueText } from '../engine/engine';
 import type { Ev } from '../engine/types';
 import { useStore } from '../lib/store';
 import { ConfirmInline, MoneyInput, Sheet, useToast } from './kit';
@@ -31,7 +31,7 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
             <span className="code">{c.code}</span>
           </div>
           <div className="item-sub">
-            {evLabel(ev, c)}・{ymLabel(ev.ym)} 首週・{c.terms.projectName}{ev.track === 'bonus' ? `・業務 ${sales?.name ?? ''}` : ''}
+            {evLabel(ev, c)}・{dueText(ev)}{ev.week ? ' 首週' : ''}・{c.terms.projectName}{ev.track === 'bonus' ? `・業務 ${sales?.name ?? ''}` : ''}
           </div>
         </div>
         <div className="item-amt" style={{ fontSize: 22 }}>{money(ev.amount)}</div>
@@ -99,7 +99,7 @@ export const EventSheet = ({ ev, onClose, onPaid }: { ev: Ev; onClose: () => voi
     <Sheet title={isRenewFinal ? '核銷並建立續約新約' : '核銷'} onClose={onClose}>
       {head}
       {!canPay ? (
-        <p className="small muted">這筆款項排在 {ymLabel(ev.ym)} 首週發放，到時候才能核銷。</p>
+        <p className="small muted">這筆款項排在 {dueText(ev)}{ev.week ? ' 首週' : ''}發放，前 7 天起才能核銷。</p>
       ) : (
         <div className="stack-14">
           <div className="grid-2">

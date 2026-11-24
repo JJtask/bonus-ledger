@@ -1,4 +1,4 @@
-import type { BonusSchedule, Contract, EffRule, Ev, Ledger, Project, Redemption, Scope, Settings, Tier } from './types';
+import type { BonusSchedule, Contract, DateRules, Ev, Ledger, PayRule, Project, Redemption, Scope, Settings, Tier } from './types';
 
 /* ---------- 日期與月份（一律用 YYYY-MM-DD 字串，避免時區誤差） ---------- */
 
@@ -43,8 +43,29 @@ export const firstWeekLabel = (ym: number) =>
 export const todayStr = (now = new Date()) =>
   `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-/** 首週看板顯示哪個月：1～7 日顯示當月，8 日起顯示下月 */
-export const boardYM = (today: string) => (dayOf(today) <= 7 ? ymOf(today) : ymOf(today) + 1);
+/** 資金看板預設顯示的月份：當月 */
+export const boardYM = (today: string) => ymOf(today);
+
+export const isWeekend = (d: string) => {
+  const w = weekdayOf(d);
+  return w === 0 || w === 6;
+};
+/** 遇週六、週日順延到下個上班日 */
+export const nextBizDay = (d: string) => {
+  let x = d;
+  while (isWeekend(x)) x = addDays(x, 1);
+  return x;
+};
+export const addBizDays = (d: string, n: number) => {
+  let x = d;
+  let left = n;
+  while (left > 0) {
+    x = addDays(x, 1);
+    if (!isWeekend(x)) left--;
+  }
+  return x;
+};
+export const shortDateW = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}（${WEEK[weekdayOf(d)]}）`;
 
 export const daysUntil = (today: string, ym: number) => {
   const [y, m, d] = parts(today);
@@ -60,11 +81,27 @@ export const wan = (n: number) =>
 
 /* ---------- 專案規則 ---------- */
 
-export const EFF_RULE_LABEL: Record<EffRule, string> = { nextMonth1: '入金隔月 1 日生效', wednesday: '最近一個週三生效' };
+export const WEEKDAY_LABEL = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+
+export const effRuleText = (r: DateRules) => {
+  if (r.effRule === 'weekday') return `入帳後最近的${WEEKDAY_LABEL[r.effWeekday ?? 3]}生效${r.effSameDay === false ? '（當天入帳取下週）' : ''}`;
+  if (r.effRule === 'tplus') return `入帳後 T+${r.effDays ?? 14} ${r.effDayUnit === 'business' ? '個工作天' : '天（遇週末順延）'}生效`;
+  return '入帳隔月 1 日生效';
+};
+export const payRuleText = (r: DateRules) => {
+  if (r.payRule === 'anniversary') return '每期滿的同一天發放（遇週末順延）';
+  if (r.payRule === 'fixedDay') return `期滿後的每月 ${r.payDay ?? 10} 日發放（遇週末順延）`;
+  return '期滿後的隔月 1～7 日發放';
+};
+export const PAY_RULE_LABEL: Record<PayRule, string> = {
+  anniversary: '每期滿的同一天（遇週末順延）',
+  firstWeek: '期滿後的隔月 1～7 日（集中發放）',
+  fixedDay: '期滿後的每月固定日（遇週末順延）'
+};
 export const BONUS_SCHEDULE_LABEL: Record<BonusSchedule, string> = {
-  split: '開始時發一半、到期後發一半',
+  split: '開始時發一半、到期時發一半',
   start: '合約開始時全部發放',
-  end: '到期後全部發放'
+  end: '到期時全部發放'
 };
 
 /** 每期月數必須能整除合約期間 */
@@ -77,23 +114,51 @@ export const tierPct = (principal: number, tiers: Tier[]) => {
   return hit ? hit.pct : 0;
 };
 
-export const effectiveDate = (depositDate: string, rule: EffRule) => {
-  if (rule === 'wednesday') return addDays(depositDate, (3 - weekdayOf(depositDate) + 7) % 7);
+export const effectiveDate = (depositDate: string, r: DateRules) => {
+  if (r.effRule === 'weekday') {
+    const wd = r.effWeekday ?? 3;
+    let gap = (wd - weekdayOf(depositDate) + 7) % 7;
+    if (gap === 0 && r.effSameDay === false) gap = 7;
+    return addDays(depositDate, gap);
+  }
+  if (r.effRule === 'tplus') {
+    const n = r.effDays ?? 14;
+    return r.effDayUnit === 'business' ? addBizDays(depositDate, n) : nextBizDay(addDays(depositDate, n));
+  }
   return dateOf(ymOf(depositDate) + 1, 1);
 };
 
 export const projectSummary = (p: Project) =>
-  `${EFF_RULE_LABEL[p.effRule]}・${p.termMonths} 個月・每 ${p.periodMonths} 個月 ${p.pct}%`;
+  `${effRuleText(p)}・${p.termMonths} 個月・每 ${p.periodMonths} 個月 ${p.pct}%・${payRuleText(p)}`;
 
 /* ---------- 合約日期 ---------- */
 
 export const endDate = (c: Pick<Contract, 'effDate' | 'terms'>) => addDays(addMonths(c.effDate, c.terms.termMonths), -1);
-/** 到期處理（退本、最後一期、到期獎金）在到期日的隔月首週 */
-export const maturityYM = (c: Pick<Contract, 'effDate' | 'terms'>) => ymOf(endDate(c)) + 1;
-/** 合約開始時的獎金：生效日在 1～7 日就當月首週發，否則隔月首週 */
-export const startYM = (c: Pick<Contract, 'effDate'>) => (dayOf(c.effDate) <= 7 ? ymOf(c.effDate) : ymOf(c.effDate) + 1);
 export const periodsOf = (c: Pick<Contract, 'terms'>) => Math.max(1, Math.round(c.terms.termMonths / c.terms.periodMonths));
-export const periodEnd = (c: Pick<Contract, 'effDate' | 'terms'>, k: number) => addDays(addMonths(c.effDate, k * c.terms.periodMonths), -1);
+/** 第 k 期的期滿日（下一期的起算日） */
+export const periodAnchor = (c: Pick<Contract, 'effDate' | 'terms'>, k: number) => addMonths(c.effDate, k * c.terms.periodMonths);
+export const periodEnd = (c: Pick<Contract, 'effDate' | 'terms'>, k: number) => addDays(periodAnchor(c, k), -1);
+
+/** 依專案的發放日規則，算出一個基準日之後的應發放日 */
+export const dueFrom = (r: DateRules, base: string, kind: 'start' | 'anchor') => {
+  if (r.payRule === 'firstWeek') {
+    // 開始：生效日在 1～7 日就當月首週，否則隔月；期滿：期滿日（前一天）的隔月首週
+    const ym = kind === 'start' ? (dayOf(base) <= 7 ? ymOf(base) : ymOf(base) + 1) : ymOf(addDays(base, -1)) + 1;
+    return dateOf(ym, 1);
+  }
+  if (r.payRule === 'fixedDay') {
+    const day = r.payDay ?? 10;
+    let ym = ymOf(base);
+    if (dateOf(ym, day) < base) ym += 1;
+    return nextBizDay(dateOf(ym, day));
+  }
+  return nextBizDay(base);
+};
+
+/** 到期處理日（最後一期分紅、退本、到期獎金同一天） */
+export const maturityDue = (c: Pick<Contract, 'effDate' | 'terms'>) => dueFrom(c.terms, periodAnchor(c, periodsOf(c)), 'anchor');
+export const maturityYM = (c: Pick<Contract, 'effDate' | 'terms'>) => ymOf(maturityDue(c));
+export const startDue = (c: Pick<Contract, 'effDate' | 'terms'>) => dueFrom(c.terms, c.effDate, 'start');
 
 export const nextCode = (effYM: number, contracts: Contract[]) => {
   const prefix = `C${String(ymYear(effYM)).slice(2)}${String(ymMonth(effYM)).padStart(2, '0')}-`;
@@ -111,7 +176,9 @@ export const tailAmount = (c: Pick<Contract, 'principal' | 'bonusPct' | 'terms'>
 
 export const eventsOf = (c: Contract, ledger: Pick<Ledger, 'payments'>): Ev[] => {
   const n = periodsOf(c);
-  const base = { contractId: c.id, salesId: c.salesId, client: c.client, code: c.code, projectId: c.terms.projectId, category: c.terms.category };
+  const week = c.terms.payRule === 'firstWeek' || undefined;
+  const base = { contractId: c.id, salesId: c.salesId, client: c.client, code: c.code, projectId: c.terms.projectId, category: c.terms.category, week };
+  const at = (due: string) => ({ due, ym: ymOf(due) });
   const out: Ev[] = [];
   const paid = (id: string) => !!ledger.payments[id];
   const r = c.redemption;
@@ -119,35 +186,37 @@ export const eventsOf = (c: Contract, ledger: Pick<Ledger, 'payments'>): Ev[] =>
   const headId = `${c.id}:head`;
   const head = headAmount(c);
   if (head > 0 && (!r || paid(headId))) {
-    out.push({ ...base, id: headId, kind: 'head', ym: startYM(c), amount: head, track: 'bonus' });
+    out.push({ ...base, ...at(startDue(c)), id: headId, kind: 'head', amount: head, track: 'bonus' });
   }
   for (let k = 1; k <= n; k++) {
-    const pEnd = periodEnd(c, k);
-    if (r && pEnd >= r.date) break;
+    if (r && periodEnd(c, k) >= r.date) break;
     const final = k === n;
     out.push({
-      ...base, id: `${c.id}:div:${k}`, kind: 'div', ym: ymOf(pEnd) + 1, amount: dividendPerPeriod(c), track: 'client',
+      ...base, ...at(dueFrom(c.terms, periodAnchor(c, k), 'anchor')), id: `${c.id}:div:${k}`, kind: 'div', amount: dividendPerPeriod(c), track: 'client',
       period: k, periods: n, final, blocked: final && c.intent === 'unk' && !r
     });
   }
   if (r) {
-    if (r.proRataDiv > 0) out.push({ ...base, id: `${c.id}:rdiv`, kind: 'rdiv', ym: r.payYM, amount: r.proRataDiv, track: 'client' });
-    out.push({ ...base, id: `${c.id}:rret`, kind: 'rret', ym: r.payYM, amount: r.refund, track: 'client' });
+    const pd = r.payDate ?? dateOf(r.payYM ?? ymOf(r.date) + 1, 1);
+    const rw = r.payDate ? week && pd.endsWith('-01') : true;
+    if (r.proRataDiv > 0) out.push({ ...base, week: rw || undefined, ...at(pd), id: `${c.id}:rdiv`, kind: 'rdiv', amount: r.proRataDiv, track: 'client' });
+    out.push({ ...base, week: rw || undefined, ...at(pd), id: `${c.id}:rret`, kind: 'rret', amount: r.refund, track: 'client' });
     return out;
   }
-  const mYM = maturityYM(c);
+  const m = at(maturityDue(c));
   const tail = tailAmount(c);
-  if (tail > 0) out.push({ ...base, id: `${c.id}:tail`, kind: 'tail', ym: mYM, amount: tail, track: 'bonus' });
+  if (tail > 0) out.push({ ...base, ...m, id: `${c.id}:tail`, kind: 'tail', amount: tail, track: 'bonus' });
   if (c.intent === 'close') {
-    out.push({ ...base, id: `${c.id}:ret`, kind: 'ret', ym: mYM, amount: c.principal, track: 'client', final: true });
+    out.push({ ...base, ...m, id: `${c.id}:ret`, kind: 'ret', amount: c.principal, track: 'client', final: true });
   } else if (c.intent === 'unk') {
-    out.push({ ...base, id: `${c.id}:ret`, kind: 'ret_unk', ym: mYM, amount: c.principal, track: 'client', final: true, blocked: true });
+    out.push({ ...base, ...m, id: `${c.id}:ret`, kind: 'ret_unk', amount: c.principal, track: 'client', final: true, blocked: true });
   } else if (c.intent === 'renew' && !c.renewedTo && head > 0) {
-    // 續約新約的開始獎金：預估列入（最保守）
-    out.push({ ...base, id: `${c.id}:headproj`, kind: 'head_proj', ym: mYM, amount: head, track: 'bonus', projected: true });
+    out.push({ ...base, ...m, id: `${c.id}:headproj`, kind: 'head_proj', amount: head, track: 'bonus', projected: true });
   }
   return out;
 };
+
+export const sortEv = (a: Ev, b: Ev) => (a.due < b.due ? -1 : a.due > b.due ? 1 : a.code.localeCompare(b.code));
 
 export const inScope = (c: Contract, scope?: Scope) =>
   !scope || scope.kind === 'all' || (scope.kind === 'cat' ? c.terms.category === scope.v : c.terms.projectId === scope.id);
@@ -220,11 +289,16 @@ export interface BoardSummary extends Totals {
   overdueTotal: number;
 }
 
-export const board = (ledger: Ledger, today: string, scope?: Scope): BoardSummary => {
-  const ym = boardYM(today);
+/** 過了應發日（首週制為該月 7 日）還沒核銷 */
+export const isOverdue = (e: Ev, ledger: Ledger, today: string) =>
+  !ledger.payments[e.id] && !e.projected && (e.week ? addDays(e.due, 6) : e.due) < today;
+
+export const board = (ledger: Ledger, today: string, scope?: Scope, month?: number): BoardSummary => {
+  const ym = month ?? boardYM(today);
   const evs = allEvents(ledger, scope);
-  const items = evs.filter((e) => e.ym === ym);
-  const overdue = evs.filter((e) => e.ym < ym && !ledger.payments[e.id] && !e.projected);
+  const items = evs.filter((e) => e.ym === ym).sort(sortEv);
+  // 逾期：本月之前的月份還沒發的款項
+  const overdue = evs.filter((e) => e.ym < ym && isOverdue(e, ledger, today)).sort(sortEv);
   return {
     ...sumTotals(items),
     ym,
@@ -264,8 +338,9 @@ export const scopeLabel = (ledger: Ledger, scope: Scope) =>
   scope.kind === 'all' ? '全部專案' : scope.kind === 'cat' ? scope.v : ledger.settings.projects.find((p) => p.id === scope.id)?.name ??
     ledger.contracts.find((c) => c.terms.projectId === scope.id)?.terms.projectName ?? '';
 
+/** 可以核銷：應發日前 7 天起就能先登記 */
 export const payable = (e: Ev, ledger: Ledger, today: string) =>
-  !e.projected && !e.blocked && !ledger.payments[e.id] && e.ym <= boardYM(today);
+  !e.projected && !e.blocked && !ledger.payments[e.id] && e.due <= addDays(today, 7);
 
 /* ---------- 12 個月水位 ---------- */
 
@@ -323,6 +398,16 @@ export const extraDividend = (ledger: Ledger, today: string, pool: number, fromY
 
 /* ---------- 提前贖回試算 ---------- */
 
+/** 贖回款的預設發放日：首週制為隔月 1～7 日；其他照下一個原訂的發放日 */
+export const redemptionPayDate = (c: Contract, date: string) => {
+  if (c.terms.payRule === 'firstWeek') return dateOf(ymOf(date) + 1, 1);
+  for (let k = 1; k <= periodsOf(c); k++) {
+    const d = dueFrom(c.terms, periodAnchor(c, k), 'anchor');
+    if (d > date) return d;
+  }
+  return nextBizDay(addDays(date, 1));
+};
+
 export const redemptionQuote = (c: Contract, ledger: Ledger, date: string, settings: Settings): Redemption => {
   const per = c.terms.periodMonths;
   const n = periodsOf(c);
@@ -334,7 +419,7 @@ export const redemptionQuote = (c: Contract, ledger: Ledger, date: string, setti
   const headPaid = ledger.payments[`${c.id}:head`];
   return {
     date,
-    payYM: ymOf(date) + 1,
+    payDate: redemptionPayDate(c, date),
     refund: round((c.principal * settings.refundPct) / 100),
     heldMonths: held,
     proRataDiv: round((dividendPerPeriod(c) * held) / per),
@@ -345,23 +430,24 @@ export const redemptionQuote = (c: Contract, ledger: Ledger, date: string, setti
 
 /* ---------- 業務對帳單 ---------- */
 
-export const salesStatement = (ledger: Ledger, today: string, salesId: string) => {
-  const ym = boardYM(today);
+export const dueText = (e: Pick<Ev, 'due' | 'week'>) => (e.week ? `${Number(e.due.slice(5, 7))}/1～7` : shortDateW(e.due));
+
+export const salesStatement = (ledger: Ledger, today: string, salesId: string, month?: number) => {
+  const ym = month ?? boardYM(today);
   const sp = ledger.sales.find((s) => s.id === salesId);
   const evs = allEvents(ledger).filter((e) => e.ym === ym && !e.projected);
   const owner = (e: Ev) => ledger.payments[e.id]?.salesId ?? e.salesId;
-  const client = evs.filter((e) => e.track === 'client' && e.salesId === salesId);
-  const bonus = evs.filter((e) => e.track === 'bonus' && owner(e) === salesId);
+  const client = evs.filter((e) => e.track === 'client' && e.salesId === salesId).sort(sortEv);
+  const bonus = evs.filter((e) => e.track === 'bonus' && owner(e) === salesId).sort(sortEv);
   const cOf = (e: Ev) => ledger.contracts.find((c) => c.id === e.contractId);
   const line = (e: Ev, i: number) => {
     const st = ledger.payments[e.id] ? '（已發）' : e.blocked ? '（待確認續存）' : '';
-    return `${i + 1}. ${e.client} ${e.code}［${cOf(e)?.terms.projectName ?? ''}］${evLabel(e, cOf(e))} ${money(e.amount)}${st}`;
+    return `${i + 1}. ${dueText(e)} ${e.client} ${e.code}［${cOf(e)?.terms.projectName ?? ''}］${evLabel(e, cOf(e))} ${money(e.amount)}${st}`;
   };
   const sum = (xs: Ev[]) => xs.reduce((t, e) => t + e.amount, 0);
   const lines = [
-    `【${ymYear(ym)} 年 ${ymMonth(ym)} 月首週對帳單】`,
+    `【${ymYear(ym)} 年 ${ymMonth(ym)} 月對帳單】`,
     `業務：${sp?.name ?? ''}`,
-    `發放期間：${firstWeekLabel(ym)}`,
     '',
     '一、客戶應發款項',
     ...(client.length ? client.map(line) : ['（本月無）']),
@@ -376,10 +462,18 @@ export const salesStatement = (ledger: Ledger, today: string, salesId: string) =
 
 /* ---------- 預設專案 ---------- */
 
+const PE: Pick<Project, 'effRule' | 'effWeekday' | 'effSameDay' | 'payRule'> = { effRule: 'weekday', effWeekday: 3, effSameDay: true, payRule: 'anniversary' };
+export const DEFAULT_RULES: Record<string, Partial<Project>> = {
+  'pj-new': { effRule: 'tplus', effDays: 14, effDayUnit: 'calendar', payRule: 'anniversary' },
+  'pj-pe6': PE,
+  'pj-pe12': PE
+};
+
 export const defaultProjects = (): Project[] => [
-  { id: 'pj-new', name: '新事業', category: '新事業', effRule: 'nextMonth1', termMonths: 12, periodMonths: 3, pct: 2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split' },
-  { id: 'pj-pe6', name: '私募半年', category: '私募', effRule: 'wednesday', termMonths: 6, periodMonths: 1, pct: 1.2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' },
-  { id: 'pj-pe12', name: '私募 1 年', category: '私募', effRule: 'wednesday', termMonths: 12, periodMonths: 1, pct: 1.5, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' }
+  { id: 'pj-new', name: '新事業', category: '新事業', ...(DEFAULT_RULES['pj-new'] as DateRulesFull), termMonths: 12, periodMonths: 3, pct: 2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split' },
+  { id: 'pj-pe6', name: '私募半年', category: '私募', ...PE, termMonths: 6, periodMonths: 1, pct: 1.2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' },
+  { id: 'pj-pe12', name: '私募 1 年', category: '私募', ...PE, termMonths: 12, periodMonths: 1, pct: 1.5, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' }
 ];
+type DateRulesFull = Pick<Project, 'effRule' | 'payRule'>;
 
 export const defaultSettings = (): Settings => ({ projects: defaultProjects(), refundPct: 90 });

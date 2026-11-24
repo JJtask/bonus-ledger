@@ -1,8 +1,8 @@
 import {
   addDays, allEvents, defaultSettings, effectiveDate, endDate, evLabel, eventsOf, money, nextCode, projectSummary,
-  redemptionQuote, statusOf, tierPct, ymLabel, ymOf, dateOf, BONUS_SCHEDULE_LABEL
+  redemptionQuote, statusOf, tierPct, ymOf, dateOf, fmtDate, BONUS_SCHEDULE_LABEL, DEFAULT_RULES
 } from './engine';
-import type { Contract, ContractTerms, Intent, Ledger, Project, Settings } from './types';
+import type { Contract, ContractTerms, DateRules, Intent, Ledger, Project, Settings } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const nowIso = () => new Date().toISOString();
@@ -16,10 +16,35 @@ export const emptyLedger = (settings: Settings = defaultSettings()): Ledger => (
   v: 2, contracts: [], sales: [], payments: {}, settings, audit: []
 });
 
+export const rulesOf = (r: DateRules): DateRules => ({
+  effRule: r.effRule, effWeekday: r.effWeekday, effSameDay: r.effSameDay, effDays: r.effDays, effDayUnit: r.effDayUnit,
+  payRule: r.payRule, payDay: r.payDay
+});
+
 export const termsOf = (p: Project): ContractTerms => ({
-  projectId: p.id, projectName: p.name, category: p.category, effRule: p.effRule,
+  projectId: p.id, projectName: p.name, category: p.category, ...rulesOf(p),
   termMonths: p.termMonths, periodMonths: p.periodMonths, pct: p.pct, bonusSchedule: p.bonusSchedule
 });
+
+/** 舊資料補齊日期規則：舊的「週三」改成「最近週X」；沒有發放日規則的舊合約維持「隔月首週」 */
+const fixRules = <T extends DateRules>(x: T, fallback?: Partial<DateRules>): T => {
+  let y = { ...x } as T & { effRule: string };
+  if ((y.effRule as string) === 'wednesday') y = { ...y, effRule: 'weekday', effWeekday: 3, effSameDay: true };
+  if (!y.payRule) y = { ...y, ...(fallback ?? {}), payRule: fallback?.payRule ?? 'firstWeek' };
+  return y as T;
+};
+
+export const normalize = (l: Ledger): Ledger => {
+  const needs = l.settings.projects.some((p) => !p.payRule || (p.effRule as string) === 'wednesday') ||
+    l.contracts.some((c) => !c.terms.payRule || (c.terms.effRule as string) === 'wednesday');
+  if (!needs) return l;
+  return {
+    ...l,
+    settings: { ...l.settings, projects: l.settings.projects.map((p) => fixRules(p, p.payRule ? undefined : DEFAULT_RULES[p.id])) },
+    contracts: l.contracts.map((c) => ({ ...c, terms: fixRules(c.terms) })),
+    audit: [...l.audit, { at: nowIso(), action: '資料升級', detail: '加入生效日／發放日規則；已建立的合約維持原本的發放日' }]
+  };
+};
 
 /* ---------- 舊版資料升級（v1：單一方案 → v2：專案制） ---------- */
 
@@ -28,7 +53,7 @@ interface V1Contract { id: string; code: string; client: string; salesId: string
 export const migrate = (raw: unknown): Ledger | null => {
   const l = raw as { v?: number } & Record<string, unknown>;
   if (!l || !Array.isArray(l.contracts) || !Array.isArray(l.sales) || typeof l.payments !== 'object' || !Array.isArray(l.audit)) return null;
-  if (l.v === 2) return l as unknown as Ledger;
+  if (l.v === 2) return normalize(l as unknown as Ledger);
   if (l.v !== 1) return null;
   const s1 = (l.settings ?? {}) as { tiers?: { min: number; pct: number }[]; refundPct?: number };
   const tiers = s1.tiers?.length ? s1.tiers : [{ min: 0, pct: 2 }];
@@ -37,7 +62,7 @@ export const migrate = (raw: unknown): Ledger | null => {
     const key = `${c.plan.months}-${c.plan.pct}`;
     if (!legacy.has(key)) {
       legacy.set(key, {
-        id: `pj-v1-${key.replace('.', '_')}`, name: `原方案 ${c.plan.name} ${c.plan.pct}%`, category: '新事業', effRule: 'nextMonth1',
+        id: `pj-v1-${key.replace('.', '_')}`, name: `原方案 ${c.plan.name} ${c.plan.pct}%`, category: '新事業', effRule: 'nextMonth1', payRule: 'firstWeek',
         termMonths: 12, periodMonths: c.plan.months, pct: c.plan.pct, tiers, bonusSchedule: 'split', archived: true
       });
     }
@@ -46,14 +71,14 @@ export const migrate = (raw: unknown): Ledger | null => {
     return { ...rest, effDate: dateOf(c.effYM, 1), terms: termsOf(legacy.get(key)!) } as Contract;
   });
   const projects = [...defaultSettings().projects, ...legacy.values()];
-  return {
+  return normalize({
     v: 2,
     contracts,
     sales: l.sales as Ledger['sales'],
     payments: l.payments as Ledger['payments'],
     settings: { projects, refundPct: s1.refundPct ?? 90 },
     audit: [...(l.audit as Ledger['audit']), { at: nowIso(), action: '資料升級', detail: '改為專案制；舊合約條件維持不變' }]
-  };
+  });
 };
 
 /* ---------- 合約 ---------- */
@@ -69,7 +94,7 @@ export interface NewContractInput {
 
 export const previewContract = (l: Ledger, input: NewContractInput): Contract => {
   const p = l.settings.projects.find((x) => x.id === input.projectId) ?? l.settings.projects[0];
-  const effDate = effectiveDate(input.depositDate, p.effRule);
+  const effDate = effectiveDate(input.depositDate, p);
   const effYM = ymOf(effDate);
   return {
     id: 'preview',
@@ -111,10 +136,10 @@ export const setIntent = (l: Ledger, contractId: string, intent: Intent): Ledger
   );
 };
 
-/** 續約新約的生效日：隔月 1 日制接續下個月 1 日；週三制取到期隔天起最近的週三 */
+/** 續約新約的生效日：週X制取到期隔天起最近的週X；其他接續到期隔天 */
 export const renewalEffDate = (c: Contract) => {
   const next = addDays(endDate(c), 1);
-  return c.terms.effRule === 'wednesday' ? effectiveDate(next, 'wednesday') : next;
+  return c.terms.effRule === 'weekday' ? effectiveDate(next, c.terms) : next;
 };
 
 export interface PayInput {
@@ -188,7 +213,7 @@ export const redeem = (l: Ledger, contractId: string, date: string, override?: {
   return withAudit(
     { ...l, contracts: l.contracts.map((x) => (x.id === contractId ? { ...x, redemption: r } : x)) },
     '提前贖回',
-    `${c.code} ${c.client}・贖回日 ${date}・實退本金 ${money(r.refund)}・當期紅利 ${money(r.proRataDiv)}（持有 ${r.heldMonths} 個月）・${ymLabel(r.payYM)} 首週發放・作廢未發獎金 ${money(r.voidedTail)}・應追回已發獎金 ${money(r.clawback)}`
+    `${c.code} ${c.client}・贖回日 ${date}・實退本金 ${money(r.refund)}・當期紅利 ${money(r.proRataDiv)}（持有 ${r.heldMonths} 個月）・${fmtDate(r.payDate)} 發放・作廢未發獎金 ${money(r.voidedTail)}・應追回已發獎金 ${money(r.clawback)}`
   );
 };
 

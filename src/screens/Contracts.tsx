@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { createContract, previewContract, redeem, setIntent } from '../engine/actions';
 import {
   BONUS_SCHEDULE_LABEL, STATUS_LABEL, endDate, eventsOf, evLabel, fmtDate, fmtDateW, maturityYM, money, periodsOf, projectSummary,
-  redemptionQuote, statusOf, tierPct, wan, ymLabel, ymOf, type Status
+  redemptionQuote, statusOf, tierPct, wan, ymLabel, ymOf, dueText, maturityDue, type Status
 } from '../engine/engine';
 import type { Contract, Ev, Intent } from '../engine/types';
 import { useStore } from '../lib/store';
@@ -209,7 +209,7 @@ export const NewContract = ({ presetClient }: { presetClient?: string }) => {
           {p && proj ? (
             <>
               <div className="grid-2" style={{ marginTop: 12 }}>
-                <div className="stat"><div className="k">生效日（{proj.effRule === 'wednesday' ? '最近週三' : '入金隔月 1 日'}）</div><div className="v">{fmtDateW(p.effDate)}</div></div>
+                <div className="stat"><div className="k">生效日</div><div className="v">{fmtDateW(p.effDate)}</div></div>
                 <div className="stat"><div className="k">到期日（{proj.termMonths} 個月）</div><div className="v">{fmtDateW(endDate(p))}</div></div>
               </div>
               <div className="grid-3" style={{ marginTop: 10, textAlign: 'center' }}>
@@ -218,7 +218,7 @@ export const NewContract = ({ presetClient }: { presetClient?: string }) => {
                 <div><div className="xs muted">業務獎金合計</div><div className="strong" style={{ marginTop: 2 }}>{money((principal ?? 0) * bonusPct / 100)}</div></div>
               </div>
               <p className="xs muted" style={{ marginTop: 8 }}>業務獎金：{BONUS_SCHEDULE_LABEL[proj.bonusSchedule]}</p>
-              <h3 className="small strong" style={{ margin: '18px 0 8px', color: 'var(--ink-2)' }}>發放時程（每月 1～7 日）</h3>
+              <h3 className="small strong" style={{ margin: '18px 0 8px', color: 'var(--ink-2)' }}>發放時程</h3>
               {evs.length ? <Timeline evs={evs.filter((e) => e.kind !== 'ret_unk')} c={p} /> : <p className="small muted">輸入本金後顯示每一次發放的時間和金額。</p>}
             </>
           ) : (
@@ -249,19 +249,19 @@ export const NewContract = ({ presetClient }: { presetClient?: string }) => {
 };
 
 const Timeline = ({ evs, paid, c }: { evs: Ev[]; paid?: Record<string, { paidOn: string }>; c?: Contract }) => {
-  // 同月份的款項合併成一列
-  const byYM = new Map<number, Ev[]>();
-  evs.forEach((e) => byYM.set(e.ym, [...(byYM.get(e.ym) ?? []), e]));
+  // 同一天的款項合併成一列
+  const byDue = new Map<string, Ev[]>();
+  evs.forEach((e) => byDue.set(e.due, [...(byDue.get(e.due) ?? []), e]));
   return (
     <ol className="timeline">
-      {[...byYM.entries()].sort((a, b) => a[0] - b[0]).map(([ym, xs]) => {
+      {[...byDue.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([due, xs]) => {
         const done = paid && xs.every((e) => paid[e.id]);
         const final = xs.some((e) => e.final);
         const onlyBonus = xs.every((e) => e.track === 'bonus');
         return (
-          <li key={ym}>
+          <li key={due}>
             <span className={`dot ${done ? 'dot-done' : final ? 'dot-final' : onlyBonus ? 'dot-bonus' : 'dot-div'}`} aria-hidden="true" />
-            <span className="strong small" style={{ color: done ? 'var(--ink-3)' : undefined }}>{ymLabel(ym)}</span>
+            <span className="strong small" style={{ color: done ? 'var(--ink-3)' : undefined }}>{xs[0].week ? `${ymLabel(xs[0].ym)} 首週` : fmtDate(due)}</span>
             <span className="small" style={{ color: done ? 'var(--ink-3)' : 'var(--ink-2)', lineHeight: 1.4 }}>
               {xs.map((e) => evLabel(e, c)).join('、')}{done ? '（已發）' : ''}
             </span>
@@ -317,7 +317,7 @@ export const ContractDetail = ({ id }: { id: string }) => {
           {c.redemption && (
             <div className="inset-danger small stack-8">
               <b>{fmtDate(c.redemption.date)} 提前贖回</b>
-              <span>實退本金 {money(c.redemption.refund)}、當期紅利 {money(c.redemption.proRataDiv)}（持有 {c.redemption.heldMonths} 個月），{ymLabel(c.redemption.payYM)} 首週發放。</span>
+              <span>實退本金 {money(c.redemption.refund)}、當期紅利 {money(c.redemption.proRataDiv)}（持有 {c.redemption.heldMonths} 個月），{c.redemption.payDate ? fmtDate(c.redemption.payDate) : `${ymLabel(c.redemption.payYM ?? 0)} 首週`} 發放。</span>
               <span>作廢尾款 {money(c.redemption.voidedTail)}{c.redemption.clawback ? `；應向業務追回已發頭款 ${money(c.redemption.clawback)}` : ''}。</span>
             </div>
           )}
@@ -326,7 +326,7 @@ export const ContractDetail = ({ id }: { id: string }) => {
         {canIntent && (
           <section className="section card pad">
             <h2 className="section-title">到期續存意願</h2>
-            <p className="small muted" style={{ margin: '4px 0 12px' }}>{ymLabel(maturityYM(c))} 首週到期。沒確認前，本金會先列入應備金額。</p>
+            <p className="small muted" style={{ margin: '4px 0 12px' }}>{fmtDateW(maturityDue(c))} 到期處理（最後一期紅利與退本同一天）。沒確認前，本金會先列入應備金額。</p>
             <Seg<Intent>
               label="續存意願"
               value={c.intent}
@@ -347,7 +347,7 @@ export const ContractDetail = ({ id }: { id: string }) => {
                     <span className={`swatch ${e.kind === 'ret_unk' ? 'sw-unk' : e.track === 'bonus' ? 'sw-bonus' : e.kind === 'ret' || e.kind === 'rret' ? 'sw-ret' : 'sw-div'}`} />
                     <div className="grow">
                       <div className="strong small">{evLabel(e, c)}{e.track === 'bonus' && p?.salesId && p.salesId !== c.salesId ? `（${ledger.sales.find((s) => s.id === p.salesId)?.name}）` : ''}</div>
-                      <div className="xs muted">{ymLabel(e.ym)} 首週{p ? `・${fmtDate(p.paidOn)} 已發${p.tail5 ? `・後五碼 ${p.tail5}` : ''}` : e.blocked ? '・待確認續存' : ''}</div>
+                      <div className="xs muted">{dueText(e)}{e.week ? ' 首週' : ''}{p ? `・${fmtDate(p.paidOn)} 已發${p.tail5 ? `・後五碼 ${p.tail5}` : ''}` : e.blocked ? '・待確認續存' : ''}</div>
                     </div>
                     <span className="strong" style={{ color: p ? 'var(--ink-3)' : e.blocked ? 'var(--warn)' : 'var(--ink)' }}>{money(e.amount)}</span>
                     {p ? <span className="tag tag-green"><Icon n="check" size={14} sw={2.6} />已發</span> : null}
@@ -395,7 +395,7 @@ const RedeemSheet = ({ c, onClose }: { c: Contract; onClose: () => void }) => {
           <MoneyInput id="rdv" value={d} onChange={setDiv} />
         </div>
         <div className="inset small stack-8">
-          <div className="row-flex"><span className="grow">發放時間</span><b>{ymLabel(q.payYM)} 首週</b></div>
+          <div className="row-flex"><span className="grow">發放日</span><b>{fmtDateW(q.payDate)}</b></div>
           <div className="row-flex"><span className="grow">之後各期紅利</span><b>不再發放</b></div>
           <div className="row-flex"><span className="grow">未發獎金作廢</span><b>{money(q.voidedTail)}</b></div>
           <div className="row-flex"><span className="grow">應追回已發獎金</span><b className={q.clawback ? 'danger-ink' : ''}>{money(q.clawback)}</b></div>
@@ -458,7 +458,7 @@ export const ClientPage = ({ client }: { client: string }) => {
             <ul className="list">
               {next.map((e) => (
                 <li key={e.id} className="item" style={{ alignItems: 'center' }}>
-                  <div className="grow"><div className="strong small">{evLabel(e, cs.find((x) => x.id === e.contractId))}</div><div className="xs muted">{ymLabel(e.ym)} 首週・{e.code}</div></div>
+                  <div className="grow"><div className="strong small">{evLabel(e, cs.find((x) => x.id === e.contractId))}</div><div className="xs muted">{dueText(e)}{e.week ? ' 首週' : ''}・{e.code}</div></div>
                   <span className="strong" style={{ color: e.blocked || e.kind === 'ret_unk' ? 'var(--warn)' : undefined }}>{money(e.amount)}</span>
                 </li>
               ))}

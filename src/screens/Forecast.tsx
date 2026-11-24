@@ -41,7 +41,7 @@ export const Forecast = () => {
       <div className="page">
         <div className="hero">
           <ScopeChips ledger={ledger} scope={scope} onChange={(v) => { setScope(v); setShown(false); }} />
-          <p className="hero-label">{scope.kind === 'all' ? '' : `${scopeLabel(ledger, scope)}・`}未來 12 個月首週合計應備（最保守）</p>
+          <p className="hero-label">{scope.kind === 'all' ? '' : `${scopeLabel(ledger, scope)}・`}未來 12 個月合計應備（最保守）</p>
           <div className="hero-amt"><span className="cur">NT$</span><span className="num">{money(total)}</span></div>
           <p className="hero-note">{ymLabel(months[0].ym)} 至 {ymLabel(months[11].ym)}・含未確認退本 {money(unk)}</p>
         </div>
@@ -51,7 +51,7 @@ export const Forecast = () => {
             <>
               <div className="row-flex" style={{ alignItems: 'flex-start' }}>
                 <div className="grow">
-                  <h2 id="peak-h" style={{ fontSize: 15, fontWeight: 600 }}>資金高峰：{ymLabel(peak.ym)} 首週</h2>
+                  <h2 id="peak-h" style={{ fontSize: 15, fontWeight: 600 }}>資金高峰：{ymLabel(peak.ym)}</h2>
                   <p className="small muted" style={{ marginTop: 4, lineHeight: 1.5 }}>
                     {peak.unkContracts.length
                       ? `其中 ${money(peak.retUnk)} 是 ${peak.unkContracts.length} 筆到期但未確認續存的本金。確認續存後會下降。`
@@ -84,7 +84,7 @@ export const Forecast = () => {
 
         <section className="section" aria-labelledby="months-h">
           <div className="section-head">
-            <h2 id="months-h" className="section-title">每月首週應備</h2>
+            <h2 id="months-h" className="section-title">每月應備</h2>
             <span className="xs muted">點月份看明細</span>
           </div>
           <div className="row-flex xs" style={{ flexWrap: 'wrap', gap: '6px 14px', marginBottom: 10, color: 'var(--ink-2)' }}>

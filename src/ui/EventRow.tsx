@@ -1,4 +1,4 @@
-import { evLabel, fmtDate, money, payable, ymLabel } from '../engine/engine';
+import { evLabel, fmtDate, money, payable, dueText } from '../engine/engine';
 import type { Ev, Ledger } from '../engine/types';
 import { Seal } from './kit';
 
@@ -15,7 +15,7 @@ export const EventRow = ({
   else if (ev.kind === 'ret') tag = { t: '不續存・結案', cls: 'tag-gray' };
   else if (ev.kind === 'div' && ev.final && c.intent === 'renew') tag = { t: c.renewedTo ? '已續約' : '確認續存・核銷後建立新約', cls: 'tag-green' };
   else if (ev.kind === 'rret' || ev.kind === 'rdiv') tag = { t: '提前贖回', cls: 'tag-red' };
-  if (overdue && !paid) tag = { t: `逾期・原訂 ${ymLabel(ev.ym)} 首週`, cls: 'tag-red' };
+  if (overdue && !paid) tag = { t: `逾期・原訂 ${dueText(ev)}`, cls: 'tag-red' };
 
   const title = ev.track === 'bonus' ? salesName ?? '' : c.client;
   const sub = ev.track === 'bonus' ? `${evLabel(ev, c)}・客戶 ${c.client}` : evLabel(ev, c);
@@ -30,7 +30,7 @@ export const EventRow = ({
             <span className="code">{c.code}</span>
             <span className="tag tag-proj">{c.terms.projectName}</span>
           </div>
-          <div className="item-sub">{showMonth ? `${ymLabel(ev.ym)}・` : ''}{sub}</div>
+          <div className="item-sub">{showMonth ? `${dueText(ev)}・` : ''}{sub}</div>
           {tag && <span className={`tag ${tag.cls}`} style={{ marginTop: 6 }}>{tag.t}</span>}
         </div>
         <div style={{ textAlign: 'right', flex: 'none' }}>
@@ -44,7 +44,7 @@ export const EventRow = ({
           ) : ev.projected ? null : can ? (
             <button type="button" className="btn btn-sm btn-out" style={{ marginTop: 8 }} onClick={() => onOpen(ev)}>核銷</button>
           ) : (
-            <span className="xs muted" style={{ display: 'block', marginTop: 8 }}>{ymLabel(ev.ym)} 首週</span>
+            <span className="xs muted" style={{ display: 'block', marginTop: 8 }}>{dueText(ev)} 起可核銷</span>
           )}
         </div>
       </div>

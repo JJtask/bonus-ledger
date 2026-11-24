@@ -232,7 +232,7 @@ button.item:active { background: var(--brand-wash); }
 
 /* ---------- 時程 ---------- */
 .timeline { list-style: none; margin: 0; padding: 0; }
-.timeline li { display: grid; grid-template-columns: 18px 72px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 0; }
+.timeline li { display: grid; grid-template-columns: 18px 86px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 7px 0; }
 .timeline .dot { margin-top: 5px; width: 10px; height: 10px; border-radius: 50%; }
 .dot-div { background: var(--field); box-shadow: 0 0 0 3px var(--brand-tint); }
 .dot-bonus { background: var(--bonus); box-shadow: 0 0 0 3px var(--bonus-bg); }
@@ -276,3 +276,11 @@ button.item:active { background: var(--brand-wash); }
 .scope-row:active { background: var(--brand-wash); }
 .scope-row.cat { background: var(--brand-wash); }
 .scope-row.proj .nm { padding-left: 12px; }
+.month-nav { display: flex; align-items: center; gap: 6px; margin: 0 -6px; }
+.month-nav .icon-btn { width: 36px; height: 36px; }
+.day-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; }
+.day-head .d { font-size: 15px; font-weight: 700; }
+.day-head.past .d { color: var(--ink-3); }
+.day-head.today .d { color: var(--brand-deep); }
+.day-head.done .d { color: var(--ink-3); }
+.tag-today { background: var(--field); color: var(--on-field); }

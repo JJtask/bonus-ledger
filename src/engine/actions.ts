@@ -1,8 +1,8 @@
 import {
   addDays, allEvents, defaultSettings, effectiveDate, endDate, evLabel, eventsOf, money, nextCode, projectSummary,
-  redemptionQuote, statusOf, tierPct, ymOf, dateOf, fmtDate, BONUS_SCHEDULE_LABEL, DEFAULT_RULES
+  redemptionQuote, statusOf, tierPct, ymOf, dateOf, fmtDate, bonusText, DEFAULT_RULES
 } from './engine';
-import type { Contract, ContractTerms, DateRules, Intent, Ledger, Project, Settings } from './types';
+import type { BonusInstallment, BonusSchedule, Contract, ContractTerms, DateRules, Intent, Ledger, Project, Settings } from './types';
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 const nowIso = () => new Date().toISOString();
@@ -23,8 +23,15 @@ export const rulesOf = (r: DateRules): DateRules => ({
 
 export const termsOf = (p: Project): ContractTerms => ({
   projectId: p.id, projectName: p.name, category: p.category, ...rulesOf(p),
-  termMonths: p.termMonths, periodMonths: p.periodMonths, pct: p.pct, bonusSchedule: p.bonusSchedule
+  termMonths: p.termMonths, periodMonths: p.periodMonths, pct: p.pct, bonusPlan: p.bonusPlan.map((b) => ({ ...b }))
 });
+
+/** 舊專案的發放方式換成分次發放（以最低級距的比例計） */
+export const planFromSchedule = (s: BonusSchedule | undefined, total: number): BonusInstallment[] =>
+  s === 'start' ? [{ at: 'start', pct: total }]
+    : s === 'end' ? [{ at: 'maturity', pct: total }]
+      : [{ at: 'start', pct: total / 2 }, { at: 'maturity', pct: total / 2 }];
+const baseTier = (p: Project) => [...p.tiers].sort((a, b) => a.min - b.min)[0]?.pct ?? 2;
 
 /** 舊資料補齊日期規則：舊的「週三」改成「最近週X」；沒有發放日規則的舊合約維持「隔月首週」 */
 const fixRules = <T extends DateRules>(x: T, fallback?: Partial<DateRules>): T => {
@@ -35,12 +42,18 @@ const fixRules = <T extends DateRules>(x: T, fallback?: Partial<DateRules>): T =
 };
 
 export const normalize = (l: Ledger): Ledger => {
-  const needs = l.settings.projects.some((p) => !p.payRule || (p.effRule as string) === 'wednesday') ||
+  const needs = l.settings.projects.some((p) => !p.payRule || !p.bonusPlan || (p.effRule as string) === 'wednesday') ||
     l.contracts.some((c) => !c.terms.payRule || (c.terms.effRule as string) === 'wednesday');
   if (!needs) return l;
   return {
     ...l,
-    settings: { ...l.settings, projects: l.settings.projects.map((p) => fixRules(p, p.payRule ? undefined : DEFAULT_RULES[p.id])) },
+    settings: {
+      ...l.settings,
+      projects: l.settings.projects.map((p) => {
+        const q = fixRules(p, p.payRule ? undefined : DEFAULT_RULES[p.id]);
+        return q.bonusPlan ? q : { ...q, bonusPlan: planFromSchedule(q.bonusSchedule, baseTier(q)) };
+      })
+    },
     contracts: l.contracts.map((c) => ({ ...c, terms: fixRules(c.terms) })),
     audit: [...l.audit, { at: nowIso(), action: '資料升級', detail: '加入生效日／發放日規則；已建立的合約維持原本的發放日' }]
   };
@@ -63,7 +76,7 @@ export const migrate = (raw: unknown): Ledger | null => {
     if (!legacy.has(key)) {
       legacy.set(key, {
         id: `pj-v1-${key.replace('.', '_')}`, name: `原方案 ${c.plan.name} ${c.plan.pct}%`, category: '新事業', effRule: 'nextMonth1', payRule: 'firstWeek',
-        termMonths: 12, periodMonths: c.plan.months, pct: c.plan.pct, tiers, bonusSchedule: 'split', archived: true
+        termMonths: 12, periodMonths: c.plan.months, pct: c.plan.pct, tiers, bonusSchedule: 'split', bonusPlan: planFromSchedule('split', tiers[0]?.pct ?? 2), archived: true
       });
     }
     const { plan: _plan, ...rest } = c;
@@ -250,6 +263,6 @@ export const transferSales = (l: Ledger, fromId: string, toId: string, today: st
 /* ---------- 設定 ---------- */
 
 export const describeProject = (p: Project) =>
-  `${p.name}（${p.category}）${projectSummary(p)}・獎金 ${p.tiers.map((t) => `${money(t.min)}↑${t.pct}%`).join('/')}・${BONUS_SCHEDULE_LABEL[p.bonusSchedule]}${p.archived ? '・已停用' : ''}`;
+  `${p.name}（${p.category}）${projectSummary(p)}・獎金 ${bonusText(p)}${p.archived ? '・已停用' : ''}`;
 
 export const updateSettings = (l: Ledger, settings: Settings, detail: string): Ledger => withAudit({ ...l, settings }, '修改設定', detail);

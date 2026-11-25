@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { createContract, previewContract, redeem, setIntent } from '../engine/actions';
 import {
-  BONUS_SCHEDULE_LABEL, STATUS_LABEL, endDate, eventsOf, evLabel, fmtDate, fmtDateW, maturityYM, money, periodsOf, projectSummary,
+  bonusPlanText, planTotal, STATUS_LABEL, endDate, eventsOf, evLabel, fmtDate, fmtDateW, maturityYM, money, periodsOf, projectSummary,
   redemptionQuote, statusOf, tierPct, wan, ymLabel, ymOf, dueText, maturityDue, type Status
 } from '../engine/engine';
 import type { Contract, Ev, Intent } from '../engine/types';
@@ -217,7 +217,7 @@ export const NewContract = ({ presetClient }: { presetClient?: string }) => {
                 <div><div className="xs muted">合約期紅利合計</div><div className="strong" style={{ marginTop: 2 }}>{money((principal ?? 0) * proj.pct / 100 * periodsOf(p))}</div></div>
                 <div><div className="xs muted">業務獎金合計</div><div className="strong" style={{ marginTop: 2 }}>{money((principal ?? 0) * bonusPct / 100)}</div></div>
               </div>
-              <p className="xs muted" style={{ marginTop: 8 }}>業務獎金：{BONUS_SCHEDULE_LABEL[proj.bonusSchedule]}</p>
+              <p className="xs muted" style={{ marginTop: 8 }}>業務獎金：{bonusPlanText(proj.bonusPlan)}{bonusPct !== planTotal(proj.bonusPlan) ? `（本合約合計 ${bonusPct}%，各次按比例調整）` : ''}</p>
               <h3 className="small strong" style={{ margin: '18px 0 8px', color: 'var(--ink-2)' }}>發放時程</h3>
               {evs.length ? <Timeline evs={evs.filter((e) => e.kind !== 'ret_unk')} c={p} /> : <p className="small muted">輸入本金後顯示每一次發放的時間和金額。</p>}
             </>

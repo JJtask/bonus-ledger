@@ -22,8 +22,16 @@ export interface DateRules {
   payDay?: number;
 }
 
-/** 業務獎金發放方式：開始一半到期一半／全部在開始時／全部在到期後 */
+/** 舊版業務獎金發放方式（只用於舊合約） */
 export type BonusSchedule = 'split' | 'start' | 'end';
+
+/** 業務獎金的一次發放：開始時／第 N 個月／到期時，佔本金幾 % */
+export interface BonusInstallment {
+  at: 'start' | 'month' | 'maturity';
+  /** at = month：生效後第幾個月 */
+  months?: number;
+  pct: number;
+}
 
 export interface Tier {
   /** 本金達此金額（含）以上適用 */
@@ -42,8 +50,12 @@ export interface Project extends DateRules {
   periodMonths: number;
   /** 每期紅利 %（以本金計） */
   pct: number;
+  /** 業務獎金總比例的級距；最低一級等於各次發放加總 */
   tiers: Tier[];
-  bonusSchedule: BonusSchedule;
+  /** 業務獎金分幾次、什麼時候發 */
+  bonusPlan: BonusInstallment[];
+  /** 舊版欄位 */
+  bonusSchedule?: BonusSchedule;
   /** 停用後不能再新增合約，但舊合約照常運作 */
   archived?: boolean;
 }
@@ -77,7 +89,9 @@ export interface ContractTerms extends DateRules {
   termMonths: number;
   periodMonths: number;
   pct: number;
-  bonusSchedule: BonusSchedule;
+  bonusPlan?: BonusInstallment[];
+  /** 舊合約：沒有 bonusPlan 時沿用 */
+  bonusSchedule?: BonusSchedule;
 }
 
 export interface Contract {
@@ -153,6 +167,8 @@ export interface Ev {
   category: string;
   projected?: boolean;
   blocked?: boolean;
+  /** 業務獎金：哪一次發放的說明，例如「開始時 1%」「第 12 個月 1%」 */
+  bonusNote?: string;
 }
 
 export type Scope = { kind: 'all' } | { kind: 'cat'; v: string } | { kind: 'proj'; id: string };

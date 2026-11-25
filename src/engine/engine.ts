@@ -1,4 +1,4 @@
-import type { BonusSchedule, Contract, DateRules, Ev, Ledger, PayRule, Project, Redemption, Scope, Settings, Tier } from './types';
+import type { BonusInstallment, BonusSchedule, Contract, DateRules, Ev, Ledger, PayRule, Project, Redemption, Scope, Settings, Tier } from './types';
 
 /* ---------- 日期與月份（一律用 YYYY-MM-DD 字串，避免時區誤差） ---------- */
 
@@ -98,10 +98,10 @@ export const PAY_RULE_LABEL: Record<PayRule, string> = {
   firstWeek: '期滿後的隔月 1～7 日（集中發放）',
   fixedDay: '期滿後的每月固定日（遇週末順延）'
 };
-export const BONUS_SCHEDULE_LABEL: Record<BonusSchedule, string> = {
-  split: '開始時發一半、到期時發一半',
-  start: '合約開始時全部發放',
-  end: '到期時全部發放'
+/** 專案的業務獎金說明 */
+export const bonusText = (p: Pick<Project, 'bonusPlan' | 'tiers'>) => {
+  const extra = [...p.tiers].filter((t) => t.min > 0).sort((a, b) => a.min - b.min);
+  return `${bonusPlanText(p.bonusPlan)}${extra.length ? `（${extra.map((t) => `滿 ${wan(t.min)} 合計 ${t.pct}%`).join('、')}）` : ''}`;
 };
 
 /** 每期月數必須能整除合約期間 */
@@ -168,9 +168,40 @@ export const nextCode = (effYM: number, contracts: Contract[]) => {
 
 export const dividendPerPeriod = (c: Pick<Contract, 'principal' | 'terms'>) => round((c.principal * c.terms.pct) / 100);
 export const bonusTotal = (c: Pick<Contract, 'principal' | 'bonusPct'>) => round((c.principal * c.bonusPct) / 100);
+/** 舊版發放方式換算成分次發放（id 沿用 head / tail，保留舊的核銷紀錄） */
+const legacyPlan = (s: BonusSchedule = 'split'): (BonusInstallment & { key: string; note: string })[] =>
+  s === 'start' ? [{ at: 'start', pct: 100, key: 'head', note: '開始時全額' }]
+    : s === 'end' ? [{ at: 'maturity', pct: 100, key: 'tail', note: '到期時全額' }]
+      : [{ at: 'start', pct: 50, key: 'head', note: '開始時 50%' }, { at: 'maturity', pct: 50, key: 'tail', note: '到期時 50%' }];
+
+export const installmentText = (b: BonusInstallment) =>
+  b.at === 'start' ? '開始時' : b.at === 'maturity' ? '到期時' : `第 ${b.months ?? 1} 個月`;
+
+export const bonusPlanText = (plan: BonusInstallment[]) =>
+  plan.map((b) => `${installmentText(b)} ${b.pct}%`).join('、');
+
+export const planTotal = (plan: BonusInstallment[]) => Math.round(plan.reduce((t, b) => t + (b.pct || 0), 0) * 1000) / 1000;
+
+export interface BonusPart { key: string; at: BonusInstallment['at']; months?: number; note: string; amount: number }
+
+/** 一張合約的業務獎金分次金額；總額 = 本金 × 合約獎金比例，依各次比例分配，尾差算在最後一次 */
+export const bonusParts = (c: Pick<Contract, 'principal' | 'bonusPct' | 'terms'>): BonusPart[] => {
+  const plan = c.terms.bonusPlan?.length
+    ? c.terms.bonusPlan.map((b, i) => ({ ...b, key: `b${i}`, note: `${installmentText(b)} ${b.pct}%` }))
+    : legacyPlan(c.terms.bonusSchedule);
+  const total = bonusTotal(c);
+  const W = plan.reduce((t, b) => t + b.pct, 0);
+  let used = 0;
+  return plan.map((b, i) => {
+    const amount = i === plan.length - 1 ? total - used : W ? round((total * b.pct) / W) : 0;
+    used += amount;
+    // 級距比例和設定不同時，備註顯示實際比例
+    const note = c.terms.bonusPlan?.length && W && Math.abs(W - c.bonusPct) > 1e-9 ? `${installmentText(b)} ${Math.round((c.bonusPct * b.pct / W) * 1000) / 1000}%` : b.note;
+    return { key: b.key, at: b.at, months: b.months, note, amount };
+  });
+};
 export const headAmount = (c: Pick<Contract, 'principal' | 'bonusPct' | 'terms'>) =>
-  c.terms.bonusSchedule === 'end' ? 0 : c.terms.bonusSchedule === 'start' ? bonusTotal(c) : round(bonusTotal(c) / 2);
-export const tailAmount = (c: Pick<Contract, 'principal' | 'bonusPct' | 'terms'>) => bonusTotal(c) - headAmount(c);
+  bonusParts(c).filter((b) => b.at === 'start').reduce((t, b) => t + b.amount, 0);
 
 /* ---------- 排程事件 ---------- */
 
@@ -183,11 +214,19 @@ export const eventsOf = (c: Contract, ledger: Pick<Ledger, 'payments'>): Ev[] =>
   const paid = (id: string) => !!ledger.payments[id];
   const r = c.redemption;
 
-  const headId = `${c.id}:head`;
-  const head = headAmount(c);
-  if (head > 0 && (!r || paid(headId))) {
-    out.push({ ...base, ...at(startDue(c)), id: headId, kind: 'head', amount: head, track: 'bonus' });
+  const parts = bonusParts(c);
+  const mDue = maturityDue(c);
+  const bonusEv = (b: BonusPart): Ev => {
+    const due = b.at === 'start' ? startDue(c) : b.at === 'maturity' ? mDue : dueFrom(c.terms, addMonths(c.effDate, b.months ?? 1), 'anchor');
+    return { ...base, ...at(due), id: `${c.id}:${b.key}`, kind: b.at === 'start' ? 'head' : 'tail', amount: b.amount, track: 'bonus', bonusNote: b.note };
+  };
+  for (const b of parts) {
+    if (b.amount <= 0) continue;
+    const e = bonusEv(b);
+    // 贖回後只保留已經發出的獎金
+    if (!r || paid(e.id)) out.push(e);
   }
+  const head = headAmount(c);
   for (let k = 1; k <= n; k++) {
     if (r && periodEnd(c, k) >= r.date) break;
     const final = k === n;
@@ -204,14 +243,12 @@ export const eventsOf = (c: Contract, ledger: Pick<Ledger, 'payments'>): Ev[] =>
     return out;
   }
   const m = at(maturityDue(c));
-  const tail = tailAmount(c);
-  if (tail > 0) out.push({ ...base, ...m, id: `${c.id}:tail`, kind: 'tail', amount: tail, track: 'bonus' });
   if (c.intent === 'close') {
     out.push({ ...base, ...m, id: `${c.id}:ret`, kind: 'ret', amount: c.principal, track: 'client', final: true });
   } else if (c.intent === 'unk') {
     out.push({ ...base, ...m, id: `${c.id}:ret`, kind: 'ret_unk', amount: c.principal, track: 'client', final: true, blocked: true });
   } else if (c.intent === 'renew' && !c.renewedTo && head > 0) {
-    out.push({ ...base, ...m, id: `${c.id}:headproj`, kind: 'head_proj', amount: head, track: 'bonus', projected: true });
+    out.push({ ...base, ...m, id: `${c.id}:headproj`, kind: 'head_proj', amount: head, track: 'bonus', projected: true, bonusNote: '續約新約開始時（預估）' });
   }
   return out;
 };
@@ -225,9 +262,10 @@ export const allEvents = (ledger: Ledger, scope?: Scope): Ev[] =>
   ledger.contracts.filter((c) => inScope(c, scope)).flatMap((c) => eventsOf(c, ledger));
 
 export const bonusLabel = (e: Ev, c?: Contract) => {
-  const s = c?.terms.bonusSchedule ?? 'split';
-  if (e.kind === 'head') return s === 'split' ? '業務獎金・開始 50%' : '業務獎金・開始時全額';
-  if (e.kind === 'tail') return s === 'split' ? '業務獎金・到期 50%' : '業務獎金・到期後全額';
+  void c;
+  if (e.bonusNote) return `業務獎金・${e.bonusNote}`;
+  if (e.kind === 'head') return '業務獎金・開始時';
+  if (e.kind === 'tail') return '業務獎金・後續';
   return '續約新約開始獎金（預估）';
 };
 
@@ -416,15 +454,17 @@ export const redemptionQuote = (c: Contract, ledger: Ledger, date: string, setti
   const start = addMonths(c.effDate, kept * per);
   let held = 0;
   while (held < per && addMonths(start, held + 1) <= date) held++;
-  const headPaid = ledger.payments[`${c.id}:head`];
+  const bonusEvs = eventsOf({ ...c, redemption: undefined }, ledger).filter((e) => e.track === 'bonus' && !e.projected);
+  const paidBonus = bonusEvs.filter((e) => ledger.payments[e.id]).reduce((t, e) => t + ledger.payments[e.id].amount, 0);
+  const unpaidBonus = bonusEvs.filter((e) => !ledger.payments[e.id]).reduce((t, e) => t + e.amount, 0);
   return {
     date,
     payDate: redemptionPayDate(c, date),
     refund: round((c.principal * settings.refundPct) / 100),
     heldMonths: held,
     proRataDiv: round((dividendPerPeriod(c) * held) / per),
-    clawback: headPaid ? headPaid.amount : 0,
-    voidedTail: tailAmount(c)
+    clawback: paidBonus,
+    voidedTail: unpaidBonus
   };
 };
 
@@ -470,9 +510,9 @@ export const DEFAULT_RULES: Record<string, Partial<Project>> = {
 };
 
 export const defaultProjects = (): Project[] => [
-  { id: 'pj-new', name: '新事業', category: '新事業', ...(DEFAULT_RULES['pj-new'] as DateRulesFull), termMonths: 12, periodMonths: 3, pct: 2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split' },
-  { id: 'pj-pe6', name: '私募半年', category: '私募', ...PE, termMonths: 6, periodMonths: 1, pct: 1.2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' },
-  { id: 'pj-pe12', name: '私募 1 年', category: '私募', ...PE, termMonths: 12, periodMonths: 1, pct: 1.5, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'start' }
+  { id: 'pj-new', name: '新事業', category: '新事業', ...(DEFAULT_RULES['pj-new'] as DateRulesFull), termMonths: 12, periodMonths: 3, pct: 2, tiers: [{ min: 0, pct: 2 }], bonusPlan: [{ at: 'start', pct: 1 }, { at: 'month', months: 12, pct: 1 }] },
+  { id: 'pj-pe6', name: '私募半年', category: '私募', ...PE, termMonths: 6, periodMonths: 1, pct: 1.2, tiers: [{ min: 0, pct: 2 }], bonusPlan: [{ at: 'start', pct: 2 }] },
+  { id: 'pj-pe12', name: '私募 1 年', category: '私募', ...PE, termMonths: 12, periodMonths: 1, pct: 1.5, tiers: [{ min: 0, pct: 2 }], bonusPlan: [{ at: 'start', pct: 2 }] }
 ];
 type DateRulesFull = Pick<Project, 'effRule' | 'payRule'>;
 

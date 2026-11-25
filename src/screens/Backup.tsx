@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { describeProject, updateSettings } from '../engine/actions';
-import { BONUS_SCHEDULE_LABEL, PAY_RULE_LABEL, TERM_OPTIONS, WEEKDAY_LABEL, effRuleText, effectiveDate, fmtDateW, periodOptions, projectSummary, wan } from '../engine/engine';
-import type { BonusSchedule, EffRule, Ledger, PayRule, Project, Tier } from '../engine/types';
+import { PAY_RULE_LABEL, addMonths, bonusText, dueFrom, fmtDate, maturityDue, planTotal, startDue, TERM_OPTIONS, WEEKDAY_LABEL, effRuleText, effectiveDate, fmtDateW, periodOptions, projectSummary } from '../engine/engine';
+import type { BonusInstallment, Contract, EffRule, Ledger, PayRule, Project, Tier } from '../engine/types';
 import { makeBackupFile, shareOrDownload } from '../lib/backup';
 import { BackupError, cryptoReady, decryptBackup, hashPin, verifyPin } from '../lib/crypto';
 import { toLedger, useStore } from '../lib/store';
@@ -179,7 +179,7 @@ export const SettingsPage = () => {
                   <div className="grow">
                     <div className="item-title"><span className="name">{p.name}</span><span className="tag tag-proj">{p.category}</span>{p.archived && <span className="tag tag-gray">已停用</span>}</div>
                     <div className="item-sub">{projectSummary(p)}</div>
-                    <div className="item-sub">業務獎金 {p.tiers.length === 1 ? `${p.tiers[0].pct}%` : p.tiers.map((t) => `${wan(t.min)}↑${t.pct}%`).join('、')}・{BONUS_SCHEDULE_LABEL[p.bonusSchedule]}</div>
+                    <div className="item-sub">業務獎金：{bonusText(p)}</div>
                   </div>
                   <span className="xs muted">{used(p.id)} 張</span>
                   <Icon n="chev" size={18} />
@@ -223,9 +223,12 @@ export const SettingsPage = () => {
   );
 };
 
+const instOrder = (b: BonusInstallment, term: number) => (b.at === 'start' ? 0 : b.at === 'maturity' ? term + 1 : b.months ?? 1);
+const sortPlan = (plan: BonusInstallment[], term: number) => [...plan].sort((a, b) => instOrder(a, term) - instOrder(b, term));
+
 const blankProject = (cat: string): Project => ({
   id: 'pj-' + Date.now().toString(36), name: '', category: cat, effRule: 'tplus', effDays: 14, effDayUnit: 'calendar', payRule: 'anniversary', termMonths: 12, periodMonths: 3, pct: 2,
-  tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split'
+  tiers: [{ min: 0, pct: 2 }], bonusPlan: [{ at: 'start', pct: 1 }, { at: 'month', months: 12, pct: 1 }]
 });
 
 const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project | null; cats: string[]; usedCount: number; onClose: () => void }) => {
@@ -234,10 +237,20 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
   const [p, setP] = useState<Project>(() => (project ? JSON.parse(JSON.stringify(project)) : blankProject(cats[0] ?? '新事業')));
   const [otherCat, setOtherCat] = useState(cats.includes(p.category) ? '' : p.category);
   const set = (patch: Partial<Project>) => setP((x) => ({ ...x, ...patch }));
-  const setTier = (i: number, patch: Partial<Tier>) => set({ tiers: p.tiers.map((t, j) => (j === i ? { ...t, ...patch } : t)) });
+  const setInst = (i: number, patch: Partial<BonusInstallment>) => set({ bonusPlan: p.bonusPlan.map((b, j) => (j === i ? { ...b, ...patch } : b)) });
+  const [extraTiers, setExtraTiers] = useState<Tier[]>(() => p.tiers.filter((t) => t.min > 0).sort((a, b) => a.min - b.min));
+  const setExtra = (i: number, patch: Partial<Tier>) => setExtraTiers(extraTiers.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  const total = planTotal(p.bonusPlan);
+  const exEff = effectiveDate('2026-12-03', p);
+  const exampleDue = (b: BonusInstallment) => {
+    const fake = { effDate: exEff, terms: { ...p, projectId: '', projectName: '' } } as unknown as Contract;
+    const due = b.at === 'start' ? startDue(fake) : b.at === 'maturity' ? maturityDue(fake) : dueFrom(p, addMonths(exEff, b.months ?? 1), 'anchor');
+    return `${fmtDate(exEff)} 生效 → ${fmtDateW(due)} 發`;
+  };
   const category = (otherCat.trim() || p.category).trim();
   const dupName = ledger.settings.projects.some((x) => x.id !== p.id && x.name === p.name.trim());
-  const ok = p.name.trim() && !dupName && category && p.pct > 0 && periodOptions(p.termMonths).includes(p.periodMonths) && p.tiers.length > 0;
+  const ok = p.name.trim() && !dupName && category && p.pct > 0 && periodOptions(p.termMonths).includes(p.periodMonths) &&
+    p.bonusPlan.length > 0 && p.bonusPlan.every((b) => b.pct > 0 && (b.at !== 'month' || ((b.months ?? 0) >= 1 && (b.months ?? 0) <= p.termMonths)));
   const save = (next: Project, msg: string) => {
     const exists = ledger.settings.projects.some((x) => x.id === next.id);
     const projects = exists ? ledger.settings.projects.map((x) => (x.id === next.id ? next : x)) : [...ledger.settings.projects, next];
@@ -319,30 +332,48 @@ const ProjectSheet = ({ project, cats, usedCount, onClose }: { project: Project 
           <span className="small">%</span>
         </div>
         <div className="stack-8">
-          <span className="label" style={{ marginBottom: 0 }}>業務獎金比例（依本金級距）</span>
-          {p.tiers.map((t, i) => (
-            <div key={i} className="row-flex">
-              <span className="small" style={{ width: 24 }}>滿</span>
-              <div className="grow"><MoneyInput id={`pj-tm-${i}`} value={t.min} onChange={(v) => setTier(i, { min: v ?? 0 })} /></div>
-              <NumInput id={`pj-tp-${i}`} value={t.pct} onChange={(v) => setTier(i, { pct: v })} />
-              <span className="small">%</span>
-              <button type="button" className="sheet-close" aria-label="刪除這個級距" disabled={p.tiers.length <= 1} onClick={() => set({ tiers: p.tiers.filter((_, j) => j !== i) })}><Icon n="trash" size={20} /></button>
+          <span className="label" style={{ marginBottom: 0 }}>業務獎金：分幾次、什麼時候發（佔本金 %）</span>
+          {p.bonusPlan.map((b, i) => (
+            <div key={i} className="inset stack-8">
+              <div className="row-flex">
+                <span className="small strong grow">第 {i + 1} 次</span>
+                <NumInput id={`pj-bp-${i}`} value={b.pct} onChange={(v) => setInst(i, { pct: v })} />
+                <span className="small">%</span>
+                <button type="button" className="sheet-close" aria-label={`刪除第 ${i + 1} 次發放`} disabled={p.bonusPlan.length <= 1} onClick={() => set({ bonusPlan: p.bonusPlan.filter((_, j) => j !== i) })}><Icon n="trash" size={20} /></button>
+              </div>
+              <Seg<BonusInstallment['at']> label={`第 ${i + 1} 次發放時間`} value={b.at} onChange={(v) => setInst(i, { at: v, months: b.months ?? Math.min(p.termMonths, 12) })}
+                options={[{ v: 'start', t: '開始時' }, { v: 'month', t: '第 N 個月' }, { v: 'maturity', t: '到期時' }]} />
+              {b.at === 'month' && (
+                <div className="row-flex">
+                  <label className="grow small" htmlFor={`pj-bm-${i}`}>生效後第幾個月</label>
+                  <NumInput id={`pj-bm-${i}`} value={b.months ?? 1} onChange={(v) => setInst(i, { months: Math.max(1, Math.round(v)) })} width={64} />
+                  <span className="small">個月</span>
+                </div>
+              )}
+              {b.at === 'month' && (b.months ?? 1) > p.termMonths && <p className="err">超過合約期間（{p.termMonths} 個月）。</p>}
+              <p className="xs muted">例：{exampleDue(b)}</p>
             </div>
           ))}
-          <button type="button" className="btn btn-quiet" onClick={() => set({ tiers: [...p.tiers, { min: (Math.max(...p.tiers.map((t) => t.min)) || 0) + 1000000, pct: p.tiers[p.tiers.length - 1]?.pct ?? 2 }] })}><Icon n="plus" size={18} />新增級距</button>
+          <button type="button" className="btn btn-quiet" onClick={() => set({ bonusPlan: [...p.bonusPlan, { at: 'month', months: Math.min(p.termMonths, 12), pct: 1 }] })}><Icon n="plus" size={18} />新增一次發放</button>
+          <div className="row-flex small" style={{ justifyContent: 'space-between', padding: '0 4px' }}><span className="muted">合計</span><b>{total}%</b></div>
+          <p className="hint">「開始時」在生效日發；「第 N 個月」在生效後滿 N 個月的那一天發；「到期時」跟最後一期紅利同一天發。都照上面的發放日規則（遇週末順延、或排在 1～7 日）。</p>
         </div>
-        <div>
-          <span className="label">業務獎金發放時間</span>
-          <div className="stack-8">
-            {(['split', 'start', 'end'] as BonusSchedule[]).map((v) => (
-              <button key={v} type="button" className="choice" aria-pressed={p.bonusSchedule === v} onClick={() => set({ bonusSchedule: v })} style={{ minHeight: 0, padding: '10px 14px', textAlign: 'left' }}>
-                <span className="t" style={{ fontSize: 14 }}>{BONUS_SCHEDULE_LABEL[v]}</span>
-              </button>
-            ))}
-          </div>
-          <p className="hint">「開始時」在生效日發（首週制排在對應月份的 1～7 日）；「到期時」跟最後一期紅利同一天發。</p>
+        <div className="stack-8">
+          <span className="label" style={{ marginBottom: 0 }}>本金級距（選填）</span>
+          <p className="xs muted" style={{ marginTop: -4 }}>本金達到某個金額時，獎金合計改用較高的比例，每一次發放依上面的比例放大。</p>
+          {extraTiers.map((t, i) => (
+            <div key={i} className="row-flex">
+              <span className="small" style={{ width: 24 }}>滿</span>
+              <div className="grow"><MoneyInput id={`pj-tm-${i}`} value={t.min} onChange={(v) => setExtra(i, { min: v ?? 0 })} /></div>
+              <span className="small">合計</span>
+              <NumInput id={`pj-tp-${i}`} value={t.pct} onChange={(v) => setExtra(i, { pct: v })} />
+              <span className="small">%</span>
+              <button type="button" className="sheet-close" aria-label="刪除這個級距" onClick={() => setExtraTiers(extraTiers.filter((_, j) => j !== i))}><Icon n="trash" size={20} /></button>
+            </div>
+          ))}
+          <button type="button" className="btn btn-quiet" onClick={() => setExtraTiers([...extraTiers, { min: (Math.max(0, ...extraTiers.map((t) => t.min)) || 0) + 3000000, pct: total + 0.5 }])}><Icon n="plus" size={18} />新增級距</button>
         </div>
-        <button type="button" className="btn btn-pri btn-block" disabled={!ok} onClick={() => save({ ...p, name: p.name.trim(), category, tiers: [...p.tiers].sort((a, b) => a.min - b.min) }, '專案已儲存')}>儲存專案</button>
+        <button type="button" className="btn btn-pri btn-block" disabled={!ok} onClick={() => save({ ...p, name: p.name.trim(), category, bonusSchedule: undefined, bonusPlan: sortPlan(p.bonusPlan, p.termMonths), tiers: [{ min: 0, pct: total }, ...extraTiers.filter((t) => t.min > 0).sort((a, b) => a.min - b.min)] }, '專案已儲存')}>儲存專案</button>
         {project && usedCount === 0 && (
           <ConfirmInline block danger label="刪除這個專案" confirmLabel="確定刪除" onConfirm={() => {
             commit(updateSettings(ledger, { ...ledger.settings, projects: ledger.settings.projects.filter((x) => x.id !== project.id) }, `刪除專案：${project.name}`));

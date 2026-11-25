@@ -9,7 +9,7 @@ import type { Ledger, Project } from './types';
 /** 測試用「舊制」專案：隔月 1 日生效、季配 3%、期滿後隔月首週發 */
 const FW: Project = {
   id: 'pj-fw', name: '舊制季配', category: '新事業', effRule: 'nextMonth1', payRule: 'firstWeek', termMonths: 12, periodMonths: 3, pct: 3,
-  tiers: [{ min: 0, pct: 2 }, { min: 1000000, pct: 3 }], bonusSchedule: 'split'
+  tiers: [{ min: 0, pct: 2 }, { min: 1000000, pct: 3 }], bonusPlan: [{ at: 'start', pct: 1 }, { at: 'maturity', pct: 1 }]
 };
 const base = (extra: Project[] = []): Ledger => {
   let l = emptyLedger();
@@ -27,6 +27,7 @@ const mk = (l: Ledger, over: Partial<{ client: string; principal: number; deposi
     projectId: over.projectId ?? 'pj-fw',
     bonusPct: over.bonusPct
   });
+const hid = (l: Ledger, c: { id: string }) => eventsOf(l.contracts.find((x) => x.id === c.id)!, l).find((e) => e.kind === 'head')!.id;
 const dues = (l: Ledger, id: string, kind: string) => eventsOf(l.contracts.find((c) => c.id === id)!, l).filter((e) => e.kind === kind).map((e) => e.due);
 
 describe('生效日規則', () => {
@@ -146,15 +147,15 @@ describe('逾期與核銷時機', () => {
 describe('離職移轉與提前贖回', () => {
   it('移轉後未發獎金歸新業務、已發獎金仍歸原業務', () => {
     let { ledger, contract } = mk(base());
-    ledger = pay(ledger, '2026-02-03', { eventId: `${contract.id}:head`, paidOn: '2026-02-03' }).ledger;
+    ledger = pay(ledger, '2026-02-03', { eventId: hid(ledger, contract), paidOn: '2026-02-03' }).ledger;
     const [a, b] = ledger.sales;
     ledger = transferSales(ledger, a.id, b.id, '2026-06-10').ledger;
-    expect(ledger.payments[`${contract.id}:head`].salesId).toBe(a.id);
+    expect(ledger.payments[hid(ledger, contract)].salesId).toBe(a.id);
     expect(salesStatement(ledger, '2027-02-03', b.id).bonus.map((e) => e.kind)).toEqual(['tail']);
   });
   it('首週制贖回：持有月數比例、隔月首週發', () => {
     let { ledger, contract } = mk(base());
-    ledger = pay(ledger, '2026-02-03', { eventId: `${contract.id}:head`, paidOn: '2026-02-03' }).ledger;
+    ledger = pay(ledger, '2026-02-03', { eventId: hid(ledger, contract), paidOn: '2026-02-03' }).ledger;
     ledger = pay(ledger, '2026-05-03', { eventId: `${contract.id}:div:1`, paidOn: '2026-05-03' }).ledger;
     const q = redemptionQuote(ledger.contracts[0], ledger, '2026-07-15', ledger.settings);
     expect(q.heldMonths).toBe(2);
@@ -242,5 +243,47 @@ describe('舊版資料升級', () => {
     expect(l.contracts[0].terms.payRule).toBe('firstWeek');
     expect(dues(l, 'c1', 'div')[0]).toBe('2027-01-01');
     expect(migrate(l)).toBe(l);
+  });
+});
+
+describe('業務獎金自訂分次發放', () => {
+  it('新事業預設：開始時 1%、第 12 個月 1%', () => {
+    const r = mk(base(), { projectId: 'pj-new', depositDate: '2026-12-03', principal: 1000000 });
+    const b = eventsOf(r.contract, r.ledger).filter((e) => e.track === 'bonus');
+    expect(b.map((e) => [e.due, e.amount, e.bonusNote])).toEqual([['2026-12-17', 10000, '開始時 1%'], ['2027-12-17', 10000, '第 12 個月 1%']]);
+  });
+  it('三次發放：開始 0.5%、第 6 個月 1%、到期 0.5%；級距放大時按比例分配', () => {
+    const P: Project = { ...FW, id: 'pj-z', effRule: 'tplus', effDays: 14, effDayUnit: 'calendar', payRule: 'anniversary',
+      tiers: [{ min: 0, pct: 2 }, { min: 3000000, pct: 3 }], bonusPlan: [{ at: 'start', pct: 0.5 }, { at: 'month', months: 6, pct: 1 }, { at: 'maturity', pct: 0.5 }] };
+    const a = mk(base([P]), { projectId: 'pj-z', depositDate: '2026-12-03', principal: 1000000 });
+    expect(eventsOf(a.contract, a.ledger).filter((e) => e.track === 'bonus').map((e) => [e.due, e.amount])).toEqual([['2026-12-17', 5000], ['2027-06-17', 10000], ['2027-12-17', 5000]]);
+    const big = mk(base([P]), { projectId: 'pj-z', depositDate: '2026-12-03', principal: 3000000 });
+    const bb = eventsOf(big.contract, big.ledger).filter((e) => e.track === 'bonus');
+    expect(bb.map((e) => e.amount)).toEqual([22500, 45000, 22500]);
+    expect(bb[1].bonusNote).toBe('第 6 個月 1.5%');
+  });
+  it('贖回：已發的獎金記為應追回，還沒發的作廢', () => {
+    let r = mk(base(), { projectId: 'pj-new', depositDate: '2026-12-03', principal: 1000000 });
+    let l = pay(r.ledger, '2026-12-17', { eventId: hid(r.ledger, r.contract), paidOn: '2026-12-17' }).ledger;
+    const q = redemptionQuote(l.contracts[0], l, '2027-05-01', l.settings);
+    expect(q.clawback).toBe(10000);
+    expect(q.voidedTail).toBe(10000);
+    l = redeem(l, r.contract.id, '2027-05-01');
+    expect(eventsOf(l.contracts[0], l).filter((e) => e.track === 'bonus')).toHaveLength(1);
+    r = r;
+  });
+  it('舊專案升級：發放方式換成分次發放，舊合約的獎金與核銷不變', () => {
+    const old = {
+      v: 2, sales: [], audit: [],
+      payments: { 'c1:head': { eventId: 'c1:head', paidOn: '2026-12-01', amount: 10000, at: '' } },
+      settings: { refundPct: 90, projects: [{ id: 'pj-q', name: 'Q', category: '新事業', effRule: 'nextMonth1', payRule: 'firstWeek', termMonths: 12, periodMonths: 3, pct: 2, tiers: [{ min: 0, pct: 2 }], bonusSchedule: 'split' }] },
+      contracts: [{ id: 'c1', code: 'C2612-01', client: '甲', salesId: 's', principal: 1000000, depositDate: '2026-11-10', effDate: '2026-12-01', effYM: ymOf('2026-12-01'), bonusPct: 2, intent: 'unk', createdAt: '',
+        terms: { projectId: 'pj-q', projectName: 'Q', category: '新事業', effRule: 'nextMonth1', payRule: 'firstWeek', termMonths: 12, periodMonths: 3, pct: 2, bonusSchedule: 'split' } }]
+    };
+    const l = migrate(old)!;
+    expect(l.settings.projects[0].bonusPlan).toEqual([{ at: 'start', pct: 1 }, { at: 'maturity', pct: 1 }]);
+    const b = eventsOf(l.contracts[0], l).filter((e) => e.track === 'bonus');
+    expect(b.map((e) => e.id)).toEqual(['c1:head', 'c1:tail']);
+    expect(l.payments['c1:head']).toBeTruthy();
   });
 });
